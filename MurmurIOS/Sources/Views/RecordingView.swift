@@ -24,7 +24,7 @@ struct RecordingView: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("Murmur")
+            .navigationTitle("Shrava")
             .toolbar {
                 if appState.launchedFromKeyboard && !appState.isRecording && appState.showingResult {
                     ToolbarItem(placement: .navigationBarTrailing) {

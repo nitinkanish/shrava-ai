@@ -6,3 +6,8 @@ xcuserdata/
 .build/
 .swiftpm/
 shrava-icons.tgz
+
+# Large binary framework — run scripts/fetch-whisper-xcframework.sh
+Vendor/whisper.xcframework/
+Vendor/*.zip
+*.partial

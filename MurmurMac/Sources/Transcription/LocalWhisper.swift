@@ -70,30 +70,10 @@ final class LocalWhisper: @unchecked Sendable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         var cleaned = original
-        if SettingsManager.shared.settings.autoCleanup { cleaned = Self.localCleanup(cleaned) }
+        if SettingsManager.shared.settings.autoCleanup { cleaned = TranscriptionCleanup.localCleanup(cleaned) }
         cleaned = await dictionary.applyCorrections(to: cleaned)
 
         return TranscriptionResult(originalText: original, cleanedText: cleaned, language: language, durationSeconds: durationSeconds)
     }
 
-    /// Lightweight on-device cleanup: drops filler words, collapses repeats and spacing, capitalises sentences.
-    static func localCleanup(_ text: String) -> String {
-        var s = text
-        let fillers = ["um+", "uh+", "erm+", "er", "ah+", "hmm+", "mm+", "you know", "I mean", "sort of", "kind of"]
-        for f in fillers {
-            s = s.replacingOccurrences(of: "(?i)(^|[\\s,])\(f)[,.]?(?=\\s|$)", with: "$1", options: .regularExpression)
-        }
-        s = s.replacingOccurrences(of: "(?i)\\b(\\w+)( \\1\\b)+", with: "$1", options: .regularExpression)
-        s = s.replacingOccurrences(of: "\\s+([,.!?])", with: "$1", options: .regularExpression)
-        s = s.replacingOccurrences(of: ",{2,}", with: ",", options: .regularExpression)
-        s = s.replacingOccurrences(of: "\\s{2,}", with: " ", options: .regularExpression)
-        s = s.trimmingCharacters(in: CharacterSet.whitespaces.union(CharacterSet(charactersIn: ",")))
-        var result = ""; var capNext = true
-        for ch in s {
-            if capNext, ch.isLetter { result.append(contentsOf: ch.uppercased()); capNext = false }
-            else { result.append(ch) }
-            if ".!?।".contains(ch) { capNext = true }
-        }
-        return result
-    }
 }

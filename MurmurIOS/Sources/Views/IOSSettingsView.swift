@@ -4,70 +4,85 @@ import MurmurCore
 struct IOSSettingsView: View {
     @EnvironmentObject var appState: IOSAppState
     @State private var settings = SettingsManager.shared.settings
-    @State private var apiKey = ""
-    @State private var showingAPIKey = false
-    @State private var showingSaveConfirmation = false
-    
+    @State private var isDownloading = false
+    @State private var downloadError: String?
+
     var body: some View {
         NavigationStack {
             Form {
-                apiKeySection
-                
+                modelSection
                 languageSection
-                
                 behaviorSection
-                
                 syncSection
-                
                 aboutSection
             }
             .navigationTitle("Settings")
-        }
-        .onAppear {
-            if let key = try? KeychainManager.shared.loadOpenAIAPIKey() {
-                apiKey = key
+            .onAppear {
+                appState.refreshModelStatus()
             }
         }
     }
-    
-    private var apiKeySection: some View {
+
+    private var modelSection: some View {
         Section {
-            HStack {
-                if showingAPIKey {
-                    TextField("API Key", text: $apiKey)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                } else {
-                    SecureField("API Key", text: $apiKey)
-                }
-                
-                Button(action: { showingAPIKey.toggle() }) {
-                    Image(systemName: showingAPIKey ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+            LabeledContent("Engine", value: "whisper.cpp (on-device)")
+            LabeledContent("Model", value: WhisperModelManager.modelDisplayName)
+            LabeledContent("File", value: WhisperModelManager.modelFileName)
+            LabeledContent("Size", value: appState.modelManager.formattedSize)
+            LabeledContent("Status", value: statusText)
+
+            if isDownloading || isDownloadingStatus {
+                ProgressView(value: appState.modelManager.downloadProgress)
+                Text("Downloading… \(Int(appState.modelManager.downloadProgress * 100))%")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            
-            Button("Save API Key") {
-                saveAPIKey()
+
+            if let downloadError {
+                Text(downloadError)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
             }
-            .disabled(apiKey.isEmpty)
-            
-            Link("Get API Key from OpenAI", destination: URL(string: "https://platform.openai.com/api-keys")!)
+
+            if !appState.modelReady {
+                Button(isDownloading ? "Downloading…" : "Download Model") {
+                    Task { await downloadModel() }
+                }
+                .disabled(isDownloading)
+            } else {
+                Label("Model ready for offline transcription", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.footnote)
+            }
         } header: {
-            Text("OpenAI API")
+            Text("On-Device Model")
         } footer: {
-            Text("Your API key is stored securely in the iOS Keychain.")
-        }
-        .alert("API Key Saved", isPresented: $showingSaveConfirmation) {
-            Button("OK", role: .cancel) {}
+            Text("Transcription runs entirely on your device with open-source Whisper. No OpenAI API or API key is used.")
         }
     }
-    
+
+    private var isDownloadingStatus: Bool {
+        if case .downloading = appState.modelManager.status { return true }
+        return false
+    }
+
+    private var statusText: String {
+        switch appState.modelManager.status {
+        case .ready: return "Ready"
+        case .missing: return "Not downloaded"
+        case .downloading(let p): return "Downloading \(Int(p * 100))%"
+        case .failed(let m): return "Failed: \(m)"
+        }
+    }
+
     private var languageSection: some View {
         Section {
             Picker("Language", selection: $settings.language) {
-                ForEach(SupportedLanguage.allCases, id: \.self) { language in
+                ForEach(SupportedLanguage.popular, id: \.self) { language in
+                    Text(language.displayName).tag(language)
+                }
+                Divider()
+                ForEach(SupportedLanguage.others, id: \.self) { language in
                     Text(language.displayName).tag(language)
                 }
             }
@@ -78,7 +93,7 @@ struct IOSSettingsView: View {
             saveSettings()
         }
     }
-    
+
     private var behaviorSection: some View {
         Section {
             Toggle("Auto-cleanup transcriptions", isOn: $settings.autoCleanup)
@@ -91,7 +106,7 @@ struct IOSSettingsView: View {
         .onChange(of: settings.hapticFeedback) { _, _ in saveSettings() }
         .onChange(of: settings.soundFeedback) { _, _ in saveSettings() }
     }
-    
+
     private var syncSection: some View {
         Section {
             Toggle("Sync with iCloud", isOn: $settings.iCloudSyncEnabled)
@@ -105,7 +120,7 @@ struct IOSSettingsView: View {
             CloudSyncManager.shared.setEnabled(newValue)
         }
     }
-    
+
     private var aboutSection: some View {
         Section {
             HStack {
@@ -114,25 +129,27 @@ struct IOSSettingsView: View {
                 Text(MurmurCore.version)
                     .foregroundStyle(.secondary)
             }
-            
+
             NavigationLink("Keyboard Setup") {
                 KeyboardSetupView()
             }
         } header: {
-            Text("About")
+            Text("About Shrava")
         }
     }
-    
-    private func saveAPIKey() {
+
+    private func downloadModel() async {
+        isDownloading = true
+        downloadError = nil
         do {
-            try KeychainManager.shared.saveOpenAIAPIKey(apiKey)
-            appState.refreshAPIKey()
-            showingSaveConfirmation = true
+            try await appState.modelManager.downloadModelWithProgress()
+            appState.refreshModelStatus()
         } catch {
-            print("Failed to save API key: \(error)")
+            downloadError = error.localizedDescription
         }
+        isDownloading = false
     }
-    
+
     private func saveSettings() {
         SettingsManager.shared.settings = settings
     }
@@ -146,14 +163,14 @@ struct KeyboardSetupView: View {
                     SetupStep(number: 1, text: "Open Settings app")
                     SetupStep(number: 2, text: "Go to General → Keyboard → Keyboards")
                     SetupStep(number: 3, text: "Tap \"Add New Keyboard...\"")
-                    SetupStep(number: 4, text: "Select \"Murmur Keyboard\"")
-                    SetupStep(number: 5, text: "Tap on \"Murmur Keyboard\" and enable \"Allow Full Access\"")
+                    SetupStep(number: 4, text: "Select \"Shrava Keyboard\"")
+                    SetupStep(number: 5, text: "Tap on \"Shrava Keyboard\" and enable \"Allow Full Access\"")
                 }
                 .padding(.vertical, 8)
             } header: {
                 Text("Setup Instructions")
             }
-            
+
             Section {
                 Button("Open Keyboard Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -161,9 +178,9 @@ struct KeyboardSetupView: View {
                     }
                 }
             }
-            
+
             Section {
-                Text("Full Access is required for the keyboard to communicate with the main app for voice recording.")
+                Text("The keyboard opens Shrava to record. The Whisper model stays in the main app because keyboard extensions cannot hold a large model in memory.")
                     .foregroundStyle(.secondary)
             } header: {
                 Text("Why Full Access?")
@@ -177,7 +194,7 @@ struct KeyboardSetupView: View {
 struct SetupStep: View {
     let number: Int
     let text: String
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(number)")
@@ -186,7 +203,7 @@ struct SetupStep: View {
                 .frame(width: 20, height: 20)
                 .background(Circle().fill(.blue))
                 .foregroundStyle(.white)
-            
+
             Text(text)
         }
     }

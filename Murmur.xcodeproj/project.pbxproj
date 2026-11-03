@@ -11,6 +11,8 @@
 		056C1619205D736F6A1C4A4E /* MurmurCore in Frameworks */ = {isa = PBXBuildFile; productRef = F9627A29C11C0758CD987147 /* MurmurCore */; };
 		05EF5BC87A9C0909F7B00B44 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CE1E73A0A6C75A68ADEFF60 /* IOSAppState.swift */; };
 		129E7C11DFAF27C781874E10 /* MurmurKeyboard.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 05AD0D5776C091609CEE64DC /* MurmurKeyboard.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		1F9C2AE79CC82E72F7A01787 /* WhisperModelManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2216D72E79524B7334E99EC /* WhisperModelManager.swift */; };
+		2465A498D48A9B0129408576 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7620DC4C4F6EE66160E88DBB /* LaunchScreen.storyboard */; };
 		32BF338B9E657A7D537C05D9 /* LocalWhisper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A680EDD08364DA361A35557 /* LocalWhisper.swift */; };
 		36F96F4C8C0E775686961A81 /* MurmurCore in Frameworks */ = {isa = PBXBuildFile; productRef = 1C51ABCF8F882B0F8C475BDD /* MurmurCore */; };
 		38C56C8907744D17E9D895A1 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B22A221C59A20284A16F68FF /* AppState.swift */; };
@@ -19,7 +21,9 @@
 		579397724ED03216C5A3D657 /* SharedConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = 977B615C845191071B952587 /* SharedConstants.swift */; };
 		58961646EBB4AAF33C65ED63 /* MurmurIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47BE5FC12313716B4A0BB797 /* MurmurIOSApp.swift */; };
 		5CBE452C18CEF05B35669C54 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 94BF96C133659D4A2BCC2A39 /* Assets.xcassets */; };
+		5E177594A7042084980178DC /* IOSWhisper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16AB41A835002FF7B0A03504 /* IOSWhisper.swift */; };
 		668046E9422370730062EB47 /* IOSDictionaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC958FF7AF133DDCED066D1D /* IOSDictionaryView.swift */; };
+		71642D99E1FB77F812C332E9 /* whisper.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = F562C6F4ECC674166D280E0C /* whisper.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		82A4C8AB5806F5EAE9085B3B /* IOSAudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = D31399BADDFE37439034B9C6 /* IOSAudioRecorder.swift */; };
 		893D8558C8F1B81EF6964189 /* IOSHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C39726CA1A8C50EFF0C4BF65 /* IOSHistoryView.swift */; };
 		8B468365D3D4D1C905A9B0EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A5D3A248AC16CC70396667 /* ContentView.swift */; };
@@ -29,12 +33,14 @@
 		A6726B0D6C1FDB575E428D67 /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 11587830C0F142BC3E260F26 /* RecordingView.swift */; };
 		A6921D0DA78C97F75652C995 /* FloatingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18263442D0126484183C972D /* FloatingIndicator.swift */; };
 		BB8EF7AFE20EB2B9296ECDBC /* DictionaryWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22149EE1CFB30DBA524EEC41 /* DictionaryWindowController.swift */; };
+		C113510F134C24B90DBA5DDA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A0279AD1FFDF1DCEA083CBC2 /* Assets.xcassets */; };
 		CB5055C6B519A836A6941BAF /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B92391F52022D3C68527D254 /* MenuBarView.swift */; };
 		D70A01F0650D968AD4F33E0F /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F17CC03544FDF7C1114C21 /* KeyboardViewController.swift */; };
 		D8BB4A1BAD66A4B0B71D1C7E /* HotkeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE411257A006574B3C8BFFE5 /* HotkeyManager.swift */; };
 		E21441C028ED298507AB9559 /* PermissionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34596185D42841CC143A2879 /* PermissionManager.swift */; };
 		E41C4BF428C823421B565A44 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A74F87B0A47209C3DD8E7A0 /* AudioRecorder.swift */; };
 		E56E42FA05D290AC8C3FDA5A /* OnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B94AAFDF3CB41B9EE4767EE /* OnboardingWindowController.swift */; };
+		F3C58A64498EB59AB76C207D /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = F562C6F4ECC674166D280E0C /* whisper.xcframework */; };
 		F769921A7F52C3F3758A2BB9 /* HistoryWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63D3B1C0F57D210B067CD6DB /* HistoryWindowController.swift */; };
 		FAA497491F7E52971A360A86 /* IOSSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8479F83853EB84D43AB9BD60 /* IOSSettingsView.swift */; };
 		FDB93AD8B996E68A572A9C3C /* IOSOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6AADDFF3C354261D38384F /* IOSOnboardingView.swift */; };
@@ -62,12 +68,24 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BCA270122C4B68898FE14C40 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				71642D99E1FB77F812C332E9 /* whisper.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		05AD0D5776C091609CEE64DC /* MurmurKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = MurmurKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0D6AADDFF3C354261D38384F /* IOSOnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSOnboardingView.swift; sourceTree = "<group>"; };
 		11587830C0F142BC3E260F26 /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
+		16AB41A835002FF7B0A03504 /* IOSWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWhisper.swift; sourceTree = "<group>"; };
 		18263442D0126484183C972D /* FloatingIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingIndicator.swift; sourceTree = "<group>"; };
 		22149EE1CFB30DBA524EEC41 /* DictionaryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryWindowController.swift; sourceTree = "<group>"; };
 		2B94AAFDF3CB41B9EE4767EE /* OnboardingWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingWindowController.swift; sourceTree = "<group>"; };
@@ -77,20 +95,24 @@
 		4CE1E73A0A6C75A68ADEFF60 /* IOSAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppState.swift; sourceTree = "<group>"; };
 		63D3B1C0F57D210B067CD6DB /* HistoryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWindowController.swift; sourceTree = "<group>"; };
 		6FF7B15C22D1FD9136BB13BC /* MurmurCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MurmurCore; path = MurmurCore; sourceTree = SOURCE_ROOT; };
+		7620DC4C4F6EE66160E88DBB /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		8479F83853EB84D43AB9BD60 /* IOSSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSettingsView.swift; sourceTree = "<group>"; };
 		8ED5D1C091C20F299AB99C8B /* MurmurMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MurmurMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		94BF96C133659D4A2BCC2A39 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		977B615C845191071B952587 /* SharedConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConstants.swift; sourceTree = "<group>"; };
 		9A74F87B0A47209C3DD8E7A0 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		A0279AD1FFDF1DCEA083CBC2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AE411257A006574B3C8BFFE5 /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		B22A221C59A20284A16F68FF /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		B92391F52022D3C68527D254 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		C2216D72E79524B7334E99EC /* WhisperModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelManager.swift; sourceTree = "<group>"; };
 		C39726CA1A8C50EFF0C4BF65 /* IOSHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSHistoryView.swift; sourceTree = "<group>"; };
 		D31399BADDFE37439034B9C6 /* IOSAudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAudioRecorder.swift; sourceTree = "<group>"; };
 		D37E54C7A63E55026A62CBAA /* MurmurMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MurmurMacApp.swift; sourceTree = "<group>"; };
 		D566CDE5D1DB006EB33097A9 /* TextInserter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextInserter.swift; sourceTree = "<group>"; };
 		D9F17CC03544FDF7C1114C21 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
 		DC958FF7AF133DDCED066D1D /* IOSDictionaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDictionaryView.swift; sourceTree = "<group>"; };
+		F562C6F4ECC674166D280E0C /* whisper.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = Vendor/whisper.xcframework; sourceTree = "<group>"; };
 		F694A2C2600987D49AEEE8D0 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		F9A5D3A248AC16CC70396667 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		FEF645EFD3D932F90AC68AFE /* MurmurIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MurmurIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -118,6 +140,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				4D68423F021DDF313E614CE9 /* MurmurCore in Frameworks */,
+				F3C58A64498EB59AB76C207D /* whisper.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -166,6 +189,14 @@
 			path = ViewModels;
 			sourceTree = "<group>";
 		};
+		2BCBC783D26F31E70C534662 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				F562C6F4ECC674166D280E0C /* whisper.xcframework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		2DB434EEFB0EF7330B954FCE /* Shared */ = {
 			isa = PBXGroup;
 			children = (
@@ -177,6 +208,7 @@
 		328679A01993FED484801EDF /* MurmurIOS */ = {
 			isa = PBXGroup;
 			children = (
+				4D35A1D8ACF226CE2E55040E /* Resources */,
 				3801CA635AFE711D9A89FEF3 /* Sources */,
 			);
 			path = MurmurIOS;
@@ -187,6 +219,7 @@
 			children = (
 				1080D019BD21B5DA4E38A456 /* App */,
 				5B656A99AB940FAA107908A0 /* Recording */,
+				52281FA72E38756603F39335 /* Transcription */,
 				20F8DE8F94B6943BA04647F6 /* ViewModels */,
 				4FF61FF162B16B1E458C54DC /* Views */,
 			);
@@ -207,6 +240,15 @@
 				9A74F87B0A47209C3DD8E7A0 /* AudioRecorder.swift */,
 			);
 			path = Recording;
+			sourceTree = "<group>";
+		};
+		4D35A1D8ACF226CE2E55040E /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A0279AD1FFDF1DCEA083CBC2 /* Assets.xcassets */,
+				7620DC4C4F6EE66160E88DBB /* LaunchScreen.storyboard */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		4FF61FF162B16B1E458C54DC /* Views */ = {
@@ -230,6 +272,15 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		52281FA72E38756603F39335 /* Transcription */ = {
+			isa = PBXGroup;
+			children = (
+				16AB41A835002FF7B0A03504 /* IOSWhisper.swift */,
+				C2216D72E79524B7334E99EC /* WhisperModelManager.swift */,
+			);
+			path = Transcription;
+			sourceTree = "<group>";
+		};
 		55AFDC8326A0474CEB29A9C9 = {
 			isa = PBXGroup;
 			children = (
@@ -238,6 +289,7 @@
 				A48876FB48675117D2CD5B08 /* MurmurMac */,
 				59F28B1FCF6287698AD0412D /* Packages */,
 				2DB434EEFB0EF7330B954FCE /* Shared */,
+				2BCBC783D26F31E70C534662 /* Frameworks */,
 				001444262D284F2CB5040E1E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -362,8 +414,10 @@
 			buildConfigurationList = FD00E6D4BB6331BEBD68615D /* Build configuration list for PBXNativeTarget "MurmurIOS" */;
 			buildPhases = (
 				B550C73B8B6B4FD362DB920A /* Sources */,
+				9DD609A31963F8D108C52199 /* Resources */,
 				ECF4333B77333C24D64ADC29 /* Frameworks */,
 				4935A2018548D0419E94ED4E /* Embed Foundation Extensions */,
+				BCA270122C4B68898FE14C40 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -443,6 +497,15 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		9DD609A31963F8D108C52199 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C113510F134C24B90DBA5DDA /* Assets.xcassets in Resources */,
+				2465A498D48A9B0129408576 /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D0A8DC25775F1A4CDF9C5918 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -495,9 +558,11 @@
 				893D8558C8F1B81EF6964189 /* IOSHistoryView.swift in Sources */,
 				FDB93AD8B996E68A572A9C3C /* IOSOnboardingView.swift in Sources */,
 				FAA497491F7E52971A360A86 /* IOSSettingsView.swift in Sources */,
+				5E177594A7042084980178DC /* IOSWhisper.swift in Sources */,
 				58961646EBB4AAF33C65ED63 /* MurmurIOSApp.swift in Sources */,
 				A6726B0D6C1FDB575E428D67 /* RecordingView.swift in Sources */,
 				579397724ED03216C5A3D657 /* SharedConstants.swift in Sources */,
+				1F9C2AE79CC82E72F7A01787 /* WhisperModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -516,14 +581,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CODE_SIGN_ENTITLEMENTS = MurmurIOS/Resources/MurmurIOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
 				INFOPLIST_FILE = MurmurIOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = "$(inherited) -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmurapp.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -626,14 +697,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++17";
 				CODE_SIGN_ENTITLEMENTS = MurmurIOS/Resources/MurmurIOS.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Vendor\"",
+				);
 				INFOPLIST_FILE = MurmurIOS/Resources/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = "$(inherited) -lc++";
 				PRODUCT_BUNDLE_IDENTIFIER = com.murmurapp.ios;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

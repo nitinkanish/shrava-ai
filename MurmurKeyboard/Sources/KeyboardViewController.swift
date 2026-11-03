@@ -190,10 +190,10 @@ class KeyboardViewController: UIInputViewController {
             return
         }
         
-        openMurmurApp()
+        openShravaApp()
     }
     
-    private func openMurmurApp() {
+    private func openShravaApp() {
         guard let url = URL(string: "murmur://record") else { return }
         
         var responder: UIResponder? = self
@@ -227,14 +227,10 @@ class KeyboardViewController: UIInputViewController {
         }
     }
     
-    private var hasFullAccess: Bool {
-        return UIPasteboard.general.hasStrings || UIPasteboard.general.hasImages || true
-    }
-    
     private func showFullAccessAlert() {
+        // Inherited hasFullAccess is false when Full Access is off.
         micButton.backgroundColor = .systemRed
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.micButton.backgroundColor = .systemBlue
         }
     }

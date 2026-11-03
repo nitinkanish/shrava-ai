@@ -5,7 +5,7 @@ import MurmurCore
 @MainActor
 final class IOSAppState: ObservableObject {
     static let shared = IOSAppState()
-    
+
     @Published var isRecording = false
     @Published var isProcessing = false
     @Published var lastTranscription: String = ""
@@ -14,61 +14,51 @@ final class IOSAppState: ObservableObject {
     @Published var showingResult = false
     @Published var launchedFromKeyboard = false
     @Published var currentTab: Tab = .record
-    
+    @Published var modelReady = false
+
     enum Tab {
         case record
         case history
         case dictionary
         case settings
     }
-    
+
     private var audioRecorder: IOSAudioRecorder?
-    private var transcriptionService: TranscriptionService?
     private var recordingTimer: Timer?
-    
+
     let dictionary: PersonalDictionary
     let historyManager: HistoryManager
-    
+    let modelManager = WhisperModelManager.shared
+
     private init() {
         dictionary = PersonalDictionary(storageURL: MurmurCore.dictionaryStorageURL())
         historyManager = HistoryManager(storageURL: MurmurCore.historyStorageURL())
-        
-        setupTranscriptionService()
+
+        modelReady = modelManager.isReady
         setupCloudSync()
         setupAudioSession()
     }
-    
-    private func setupTranscriptionService() {
-        guard let apiKey = try? KeychainManager.shared.loadOpenAIAPIKey() else {
-            return
-        }
-        
-        let client = OpenAIClient(apiKey: apiKey)
-        transcriptionService = TranscriptionService(
-            client: client,
-            dictionary: dictionary
-        )
-    }
-    
+
     private func setupCloudSync() {
         if SettingsManager.shared.settings.iCloudSyncEnabled {
             CloudSyncManager.shared.setEnabled(true)
         }
     }
-    
+
     private func setupAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetooth])
+            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetoothHFP])
         } catch {
             print("Failed to setup audio session: \(error)")
         }
     }
-    
-    func refreshAPIKey() {
-        setupTranscriptionService()
+
+    func refreshModelStatus() {
+        modelManager.refreshStatus()
+        modelReady = modelManager.isReady
     }
-    
+
     func startRecordingFromKeyboard() {
         launchedFromKeyboard = true
         currentTab = .record
@@ -76,40 +66,46 @@ final class IOSAppState: ObservableObject {
             await startRecording()
         }
     }
-    
+
     func checkForPendingTranscription() {
-        // Check if keyboard is waiting for transcription
+        // Keyboard reads shared_transcription.txt when returning to the host app.
     }
-    
+
     func requestMicrophonePermission() async -> Bool {
         await AVAudioApplication.requestRecordPermission()
     }
-    
+
     var hasMicrophonePermission: Bool {
         AVAudioApplication.shared.recordPermission == .granted
     }
-    
+
     func startRecording() async {
         guard !isRecording else { return }
-        
-        guard hasMicrophonePermission else {
+
+        if !hasMicrophonePermission {
             let granted = await requestMicrophonePermission()
             if !granted {
                 lastError = "Microphone permission not granted"
                 return
             }
         }
-        
+
+        refreshModelStatus()
+        guard modelReady else {
+            lastError = "Download the on-device Whisper model in Settings or Onboarding first."
+            return
+        }
+
         isRecording = true
         recordingDuration = 0
         lastError = nil
         showingResult = false
-        
+
         audioRecorder = IOSAudioRecorder()
         do {
             try await audioRecorder?.startRecording()
             startRecordingTimer()
-            
+
             if SettingsManager.shared.settings.hapticFeedback {
                 let generator = UIImpactFeedbackGenerator(style: .medium)
                 generator.impactOccurred()
@@ -119,41 +115,38 @@ final class IOSAppState: ObservableObject {
             lastError = "Failed to start recording: \(error.localizedDescription)"
         }
     }
-    
+
     func stopRecordingAndTranscribe() async {
         guard isRecording else { return }
-        
+
         stopRecordingTimer()
         isRecording = false
         isProcessing = true
-        
+
         if SettingsManager.shared.settings.hapticFeedback {
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         }
-        
+
         defer { isProcessing = false }
-        
+
         guard let recorder = audioRecorder,
-              let audioData = await recorder.stopRecording() else {
+              let audioData = recorder.stopRecording() else {
             lastError = "No audio data recorded"
             return
         }
-        
-        guard let service = transcriptionService else {
-            lastError = "Please set your OpenAI API key in Settings"
-            return
-        }
-        
+
         do {
-            let result = try await service.transcribeAndCleanup(
+            let result = try await IOSWhisper.shared.transcribe(
                 audioData: audioData,
-                durationSeconds: recordingDuration
+                durationSeconds: recordingDuration,
+                language: SettingsManager.shared.settings.language,
+                dictionary: dictionary
             )
-            
+
             lastTranscription = result.cleanedText
             showingResult = true
-            
+
             let entry = HistoryEntry(
                 originalText: result.originalText,
                 cleanedText: result.cleanedText,
@@ -161,72 +154,59 @@ final class IOSAppState: ObservableObject {
                 durationSeconds: result.durationSeconds
             )
             await historyManager.add(entry)
-            
+
             if SettingsManager.shared.settings.iCloudSyncEnabled {
                 let allHistory = await historyManager.getAll()
                 CloudSyncManager.shared.syncHistory(allHistory)
             }
-            
+
             if launchedFromKeyboard {
                 writeTranscriptionToAppGroup(result.cleanedText)
             }
-            
+
             if SettingsManager.shared.settings.hapticFeedback {
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(.success)
             }
-            
-        } catch let error as OpenAIError {
-            switch error {
-            case .unauthorized:
-                lastError = "Invalid API key. Please check your OpenAI API key in Settings."
-            case .rateLimited:
-                lastError = "Rate limited. Please try again in a moment."
-            case .transcriptionFailed(let message):
-                lastError = "Transcription failed: \(message)"
-            case .cleanupFailed(let message):
-                lastError = "Cleanup failed: \(message)"
-            default:
-                lastError = "Error: \(error)"
-            }
-            
+
+        } catch {
+            lastError = "Error: \(error.localizedDescription)"
+
             if SettingsManager.shared.settings.hapticFeedback {
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(.error)
             }
-        } catch {
-            lastError = "Error: \(error.localizedDescription)"
         }
     }
-    
+
     func cancelRecording() async {
         guard isRecording else { return }
-        
+
         stopRecordingTimer()
         isRecording = false
-        await audioRecorder?.cancelRecording()
+        audioRecorder?.cancelRecording()
         launchedFromKeyboard = false
     }
-    
+
     private func writeTranscriptionToAppGroup(_ text: String) {
         guard let url = MurmurCore.sharedTranscriptionURL() else { return }
-        
+
         do {
             try text.write(to: url, atomically: true, encoding: .utf8)
         } catch {
             print("Failed to write transcription to App Group: \(error)")
         }
     }
-    
+
     func copyToClipboard() {
         UIPasteboard.general.string = lastTranscription
-        
+
         if SettingsManager.shared.settings.hapticFeedback {
             let generator = UIImpactFeedbackGenerator(style: .light)
             generator.impactOccurred()
         }
     }
-    
+
     private func startRecordingTimer() {
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -234,7 +214,7 @@ final class IOSAppState: ObservableObject {
             }
         }
     }
-    
+
     private func stopRecordingTimer() {
         recordingTimer?.invalidate()
         recordingTimer = nil
