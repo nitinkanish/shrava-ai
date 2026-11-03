@@ -11,3 +11,6 @@ shrava-icons.tgz
 Vendor/whisper.xcframework/
 Vendor/*.zip
 *.partial
+
+# UI screenshots (local)
+dist/screens/

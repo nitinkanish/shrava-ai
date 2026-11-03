@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import ShravaCore
 
 @main
@@ -30,6 +31,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         LegacyMigration.runAll()
+        UISnapshotHelper.runIfRequested()
+        if ProcessInfo.processInfo.arguments.contains("--show-settings-hotkey") {
+            UserDefaults.standard.set(3, forKey: "shrava.settings.selectedTab")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+        }
         checkOnboardingNeeded()
         setupHotkey()
         floatingIndicator = FloatingIndicatorController()
@@ -47,11 +56,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     private func checkOnboardingNeeded() {
-        let hasAPIKey = true
+        let forceShow = ProcessInfo.processInfo.arguments.contains("--show-onboarding")
         let hasMicPermission = PermissionManager.shared.hasMicrophonePermission
         let hasAccessibilityPermission = PermissionManager.shared.hasAccessibilityPermission
         
-        if !hasAPIKey || !hasMicPermission || !hasAccessibilityPermission {
+        if forceShow || !hasMicPermission || !hasAccessibilityPermission {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 OnboardingWindowController.shared.showWindow()
             }

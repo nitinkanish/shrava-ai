@@ -11,6 +11,7 @@ struct IOSSettingsView: View {
         NavigationStack {
             Form {
                 modelSection
+                meetingBriefSection
                 languageSection
                 behaviorSection
                 syncSection
@@ -72,6 +73,21 @@ struct IOSSettingsView: View {
         case .missing: return "Not downloaded"
         case .downloading(let p): return "Downloading \(Int(p * 100))%"
         case .failed(let m): return "Failed: \(m)"
+        }
+    }
+
+
+    private var meetingBriefSection: some View {
+        Section {
+            NavigationLink {
+                IOSAnalysisSettingsView()
+            } label: {
+                Label("Meeting Brief (Ollama)", systemImage: "sparkles")
+            }
+        } header: {
+            Text("Analysis")
+        } footer: {
+            Text("Analyze transcripts into a meeting brief with action items via Ollama Cloud or a local server.")
         }
     }
 
@@ -205,6 +221,116 @@ struct SetupStep: View {
                 .foregroundStyle(.white)
 
             Text(text)
+        }
+    }
+}
+
+
+struct IOSAnalysisSettingsView: View {
+    @State private var mode: OllamaEndpointMode = AnalysisSettingsStore.load().endpointMode
+    @State private var customURL: String = AnalysisSettingsStore.load().customBaseURL
+    @State private var model: String = AnalysisSettingsStore.load().model
+    @State private var apiKey: String = ""
+    @State private var keyPresent = OllamaSecrets.hasAPIKey()
+    @State private var testing = false
+    @State private var testMessage: String?
+    @State private var testOK = false
+
+    var body: some View {
+        Form {
+            Section("Endpoint") {
+                Picker("Provider", selection: $mode) {
+                    ForEach(OllamaEndpointMode.allCases, id: \.self) { m in
+                        Text(m.displayName).tag(m)
+                    }
+                }
+                .onChange(of: mode) { _, _ in persist() }
+                if mode == .custom {
+                    TextField("Base URL", text: $customURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: customURL) { _, _ in persist() }
+                }
+            }
+            Section("Model") {
+                TextField("Model name", text: $model)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onChange(of: model) { _, _ in persist() }
+                Text("Default gpt-oss:120b-cloud. Fallback: gpt-oss:120b")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("API key") {
+                SecureField(keyPresent ? "•••••••• (replace to update)" : "Paste API key", text: $apiKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Button("Save to Keychain") { saveKey() }
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if keyPresent {
+                    Button("Remove key", role: .destructive) {
+                        OllamaSecrets.deleteAPIKey()
+                        keyPresent = false
+                        apiKey = ""
+                    }
+                }
+                Text(keyPresent ? "Key stored in Keychain" : "No key stored")
+                    .font(.caption)
+                    .foregroundStyle(keyPresent ? .green : .secondary)
+            }
+            Section {
+                Button {
+                    Task { await runTest() }
+                } label: {
+                    if testing { ProgressView() } else { Text("Test connection") }
+                }
+                .disabled(testing)
+                if let testMessage {
+                    Text(testMessage)
+                        .font(.caption)
+                        .foregroundStyle(testOK ? .green : .red)
+                }
+            }
+        }
+        .navigationTitle("Meeting Brief")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func persist() {
+        var s = AnalysisSettingsStore.load()
+        s.endpointMode = mode
+        s.customBaseURL = customURL
+        let m = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        s.model = m.isEmpty ? AnalysisSettings.default.model : m
+        AnalysisSettingsStore.save(s)
+    }
+
+    private func saveKey() {
+        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        do {
+            try OllamaSecrets.saveAPIKey(trimmed)
+            keyPresent = true
+            apiKey = ""
+            testOK = true
+            testMessage = "API key saved to Keychain."
+        } catch {
+            testOK = false
+            testMessage = error.localizedDescription
+        }
+    }
+
+    private func runTest() async {
+        persist()
+        testing = true
+        defer { testing = false }
+        do {
+            let reply = try await OllamaClient.shared.testConnection()
+            testOK = true
+            testMessage = "Connected: \(String(reply.prefix(80)))"
+        } catch {
+            testOK = false
+            testMessage = error.localizedDescription
         }
     }
 }

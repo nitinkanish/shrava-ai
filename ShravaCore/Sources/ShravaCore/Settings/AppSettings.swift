@@ -80,6 +80,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     #if os(macOS)
     public var hotkeyModifiers: UInt
     public var hotkeyKeyCode: UInt16
+    public var handsFreeEnabled: Bool
     public var useAccessibilityInsertion: Bool
     #endif
     
@@ -94,6 +95,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             soundFeedback: true,
             hotkeyModifiers: 0,
             hotkeyKeyCode: 63, // Fn key
+            handsFreeEnabled: true,
             useAccessibilityInsertion: true
         )
         #else
@@ -117,6 +119,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         soundFeedback: Bool = true,
         hotkeyModifiers: UInt = 0,
         hotkeyKeyCode: UInt16 = 63,
+        handsFreeEnabled: Bool = true,
         useAccessibilityInsertion: Bool = true
     ) {
         self.language = language
@@ -128,6 +131,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         #if os(macOS)
         self.hotkeyModifiers = hotkeyModifiers
         self.hotkeyKeyCode = hotkeyKeyCode
+        self.handsFreeEnabled = handsFreeEnabled
         self.useAccessibilityInsertion = useAccessibilityInsertion
         #endif
     }
@@ -170,3 +174,27 @@ public final class SettingsManager: @unchecked Sendable {
         }
     }
 }
+
+
+#if os(macOS)
+extension AppSettings {
+    enum CodingKeys: String, CodingKey {
+        case language, iCloudSyncEnabled, autoCleanup, showOriginalText, hapticFeedback, soundFeedback
+        case hotkeyModifiers, hotkeyKeyCode, handsFreeEnabled, useAccessibilityInsertion
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        language = try c.decodeIfPresent(SupportedLanguage.self, forKey: .language) ?? .english
+        iCloudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .iCloudSyncEnabled) ?? false
+        autoCleanup = try c.decodeIfPresent(Bool.self, forKey: .autoCleanup) ?? true
+        showOriginalText = try c.decodeIfPresent(Bool.self, forKey: .showOriginalText) ?? false
+        hapticFeedback = try c.decodeIfPresent(Bool.self, forKey: .hapticFeedback) ?? true
+        soundFeedback = try c.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
+        hotkeyModifiers = try c.decodeIfPresent(UInt.self, forKey: .hotkeyModifiers) ?? 0
+        hotkeyKeyCode = try c.decodeIfPresent(UInt16.self, forKey: .hotkeyKeyCode) ?? 63
+        handsFreeEnabled = try c.decodeIfPresent(Bool.self, forKey: .handsFreeEnabled) ?? true
+        useAccessibilityInsertion = try c.decodeIfPresent(Bool.self, forKey: .useAccessibilityInsertion) ?? true
+    }
+}
+#endif

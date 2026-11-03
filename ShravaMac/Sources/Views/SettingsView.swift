@@ -4,20 +4,21 @@ import ServiceManagement
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var selectedTab = 0
+    @State private var selectedTab = UserDefaults.standard.integer(forKey: "shrava.settings.selectedTab")
 
     var body: some View {
         TabView(selection: $selectedTab) {
             GeneralSettingsView().tabItem { Label("General", systemImage: "gear") }.tag(0)
             IndicatorSettingsView().tabItem { Label("Indicator", systemImage: "waveform.circle") }.tag(1)
             APISettingsView().tabItem { Label("Model", systemImage: "cpu") }.tag(2)
+            AnalysisSettingsView().tabItem { Label("Meeting Brief", systemImage: "sparkles") }.tag(8)
             HotkeySettingsView().tabItem { Label("Hotkey", systemImage: "keyboard") }.tag(3)
             PermissionsSettingsView().tabItem { Label("Permissions", systemImage: "lock.shield") }.tag(4)
             DataSettingsView().environmentObject(appState).tabItem { Label("Data", systemImage: "chart.bar") }.tag(5)
             SyncSettingsView().tabItem { Label("Sync", systemImage: "icloud") }.tag(6)
             AboutSettingsView().tabItem { Label("About", systemImage: "info.circle") }.tag(7)
         }
-        .frame(width: 620, height: 460)
+        .frame(width: 620, height: 500)
         .padding()
     }
 }
@@ -227,6 +228,7 @@ struct DataSettingsView: View {
         .confirmationDialog("Delete all \(entries.count) recordings from History?", isPresented: $confirmClear) {
             Button("Delete all", role: .destructive) {
                 Task {
+                    await BriefStore.shared.clear()
                     await appState.historyManager.clear()
                     entries = []
                     NotificationCenter.default.post(name: .shravaHistoryUpdated, object: nil)
@@ -258,73 +260,139 @@ struct AboutSettingsView: View {
             Text("Every Conversation, Captured").font(.headline).foregroundStyle(.secondary)
             Text("Version \(version)").foregroundStyle(.secondary)
             Text("Hold Fn to talk. Double-tap Fn for hands-free, tap again to stop.")
-                .font(.callout).multilineTextAlignment(.center).padding(.top, 6)
+                .font(.callout).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true).padding(.top, 6)
             Text("Speech recognition by the open-source Whisper model, running on-device with whisper.cpp.")
-                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }
-        .padding(30).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
 struct HotkeySettingsView: View {
     @State private var settings = SettingsManager.shared.settings
-    @State private var isRecordingHotkey = false
-    
-    var body: some View {
-        Form {
-            Section {
-                HStack {
-                    Text("Hold-to-talk hotkey:")
-                    
-                    Spacer()
-                    
-                    if isRecordingHotkey {
-                        Text("Press a key...")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(currentHotkeyDescription)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.secondary.opacity(0.2))
-                            .cornerRadius(4)
-                    }
-                    
-                    Button(isRecordingHotkey ? "Cancel" : "Change") {
-                        isRecordingHotkey.toggle()
-                    }
-                }
-                
-                Text("Default: Fn key. Alternative: Control+Option")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+
+    private enum HotkeyPreset: String, CaseIterable, Identifiable {
+        case fn, rightOption, rightCommand, controlOption
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .fn: return "Fn"
+            case .rightOption: return "Right Option"
+            case .rightCommand: return "Right Command"
+            case .controlOption: return "Control + Option"
             }
-            
-            Section {
-                Button("Reset to Default (Fn)") {
-                    settings.hotkeyKeyCode = 63
-                    settings.hotkeyModifiers = 0
-                    SettingsManager.shared.settings = settings
-                    HotkeyManager.shared.setHotkey(keyCode: 63, modifiers: [])
-                }
-                
-                Button("Use Control+Option") {
-                    settings.hotkeyKeyCode = 0
-                    settings.hotkeyModifiers = UInt(CGEventFlags.maskControl.rawValue | CGEventFlags.maskAlternate.rawValue)
-                    SettingsManager.shared.settings = settings
-                    HotkeyManager.shared.setHotkey(
-                        keyCode: 0,
-                        modifiers: [.maskControl, .maskAlternate]
-                    )
-                }
+        }
+        var keyCode: UInt16 {
+            switch self {
+            case .fn: return 63
+            case .rightOption: return 61
+            case .rightCommand: return 54
+            case .controlOption: return 0
+            }
+        }
+        var modifiers: CGEventFlags {
+            switch self {
+            case .controlOption: return [.maskControl, .maskAlternate]
+            default: return []
+            }
+        }
+        static func matching(keyCode: UInt16, modifiers: UInt) -> HotkeyPreset {
+            let flags = CGEventFlags(rawValue: UInt64(modifiers))
+            if keyCode == 0 && flags.contains(.maskControl) && flags.contains(.maskAlternate) {
+                return .controlOption
+            }
+            switch keyCode {
+            case 61: return .rightOption
+            case 54: return .rightCommand
+            default: return .fn
             }
         }
     }
-    
-    private var currentHotkeyDescription: String {
-        HotkeyManager.hotkeyDescription(
-            keyCode: settings.hotkeyKeyCode,
-            modifiers: settings.hotkeyModifiers
-        )
+
+    private var selectedPreset: HotkeyPreset {
+        HotkeyPreset.matching(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+    }
+
+    private var holdLabel: String {
+        HotkeyManager.hotkeyDescription(keyCode: settings.hotkeyKeyCode, modifiers: settings.hotkeyModifiers)
+    }
+
+    var body: some View {
+        ScrollView {
+            Form {
+                Section("Shortcuts") {
+                    shortcutRow("Hold to talk", chips: [holdLabel])
+                    shortcutRow(
+                        "Hands-free start",
+                        chips: settings.handsFreeEnabled ? ["double-tap \(holdLabel)"] : ["Off"]
+                    )
+                    shortcutRow(
+                        "Stop hands-free",
+                        chips: settings.handsFreeEnabled ? ["tap \(holdLabel)"] : ["—"]
+                    )
+                    shortcutRow("Cancel", chips: ["quick tap", "Esc"])
+                }
+
+                Section("Hotkey") {
+                    Picker("Hold-to-talk key", selection: Binding(
+                        get: { selectedPreset },
+                        set: { apply($0) }
+                    )) {
+                        ForEach(HotkeyPreset.allCases) { preset in
+                            Text(preset.title).tag(preset)
+                        }
+                    }
+
+                    Toggle("Enable hands-free (double-tap)", isOn: Binding(
+                        get: { settings.handsFreeEnabled },
+                        set: { newValue in
+                            settings.handsFreeEnabled = newValue
+                            SettingsManager.shared.settings = settings
+                        }
+                    ))
+
+                    Text("Presets apply immediately and are saved. Fn is recommended on MacBook keyboards.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Section("How it works") {
+                    Text("Hold to dictate; release to type at the cursor. Double-tap starts hands-free; tap once to stop. Quick tap cancels; Esc cancels an active hold.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.bottom, 8)
+        }
+        .onAppear { settings = SettingsManager.shared.settings }
+    }
+
+    private func apply(_ preset: HotkeyPreset) {
+        settings.hotkeyKeyCode = preset.keyCode
+        settings.hotkeyModifiers = UInt(preset.modifiers.rawValue)
+        SettingsManager.shared.settings = settings
+        HotkeyManager.shared.setHotkey(keyCode: preset.keyCode, modifiers: preset.modifiers)
+    }
+
+    private func shortcutRow(_ title: String, chips: [String]) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Text(title)
+                .frame(width: 130, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            HStack(spacing: 6) {
+                ForEach(chips, id: \.self) { chip in
+                    Text(chip)
+                        .font(.system(.caption, design: .rounded).weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.secondary.opacity(0.15)))
+                }
+            }
+        }
     }
 }
 
@@ -333,12 +401,15 @@ struct SyncSettingsView: View {
     
     var body: some View {
         Form {
-            Toggle("Sync with iCloud", isOn: $settings.iCloudSyncEnabled)
-            
-            Text("Sync your dictionary and recent history across your Mac and iOS devices.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Section("iCloud") {
+                Toggle("Sync with iCloud", isOn: $settings.iCloudSyncEnabled)
+                Text("Sync your dictionary and recent history across your Mac and iOS devices.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+        .formStyle(.grouped)
         .onChange(of: settings.iCloudSyncEnabled) { oldValue, newValue in
             SettingsManager.shared.settings = settings
             CloudSyncManager.shared.setEnabled(newValue)

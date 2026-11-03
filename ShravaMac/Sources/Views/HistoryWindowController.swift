@@ -120,7 +120,11 @@ struct HistoryView: View {
         }
         .confirmationDialog("Clear all history?", isPresented: $confirmClear) {
             Button("Clear All", role: .destructive) {
-                Task { await appState.historyManager.clear(); await loadEntries() }
+                Task {
+                    await BriefStore.shared.clear()
+                    await appState.historyManager.clear()
+                    await loadEntries()
+                }
             }
         }
     }
@@ -168,7 +172,11 @@ struct HistoryView: View {
     }
 
     private func delete(_ entry: HistoryEntry) {
-        Task { await appState.historyManager.delete(entry.id); await loadEntries() }
+        Task {
+            await BriefStore.shared.delete(for: entry.id)
+            await appState.historyManager.delete(entry.id)
+            await loadEntries()
+        }
     }
 
     private func loadEntries() async {
@@ -195,6 +203,10 @@ struct HistoryCard: View {
     @State private var hovering = false
     @State private var showOriginal = false
     @State private var copied = false
+    @State private var analyzing = false
+    @State private var brief: MeetingBrief?
+    @State private var showBrief = false
+    @State private var analyzeError: String?
 
     private var appName: String? {
         guard let id = entry.appBundleIdentifier,
@@ -240,10 +252,37 @@ struct HistoryCard: View {
                         Button(showOriginal ? "Hide original" : "Show original") { showOriginal.toggle() }
                             .buttonStyle(.link).font(.system(size: 11))
                     }
+                    if brief != nil {
+                        Button {
+                            showBrief = true
+                        } label: {
+                            Label("Brief", systemImage: "doc.text.magnifyingglass")
+                        }
+                        .buttonStyle(.link).font(.system(size: 11))
+                    }
+                }
+
+                if let analyzeError {
+                    Text(analyzeError)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             HStack(spacing: 4) {
+                Button {
+                    Task { await analyze(force: brief != nil) }
+                } label: {
+                    if analyzing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: brief == nil ? "sparkles" : "arrow.clockwise")
+                    }
+                }
+                .help(brief == nil ? "Analyze meeting" : "Re-analyze")
+                .disabled(analyzing || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.cleanedText, forType: .string)
@@ -254,12 +293,26 @@ struct HistoryCard: View {
                 Button(action: onDelete) { Image(systemName: "trash") }.help("Delete")
             }
             .buttonStyle(.borderless)
-            .opacity(hovering || copied ? 1 : 0)
+            .opacity(hovering || copied || analyzing || brief != nil ? 1 : 0)
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
         .background(hovering ? Color.primary.opacity(0.03) : Color.clear)
         .onHover { hovering = $0 }
+        .task { brief = await BriefStore.shared.brief(for: entry.id) }
+        .sheet(isPresented: $showBrief) {
+            MeetingBriefSheet(entry: entry, brief: $brief) {
+                showBrief = false
+                Task { await analyze(force: true) }
+            }
+        }
         .contextMenu {
+            Button(brief == nil ? "Analyze meeting" : "View brief") {
+                if brief != nil { showBrief = true }
+                else { Task { await analyze(force: false) } }
+            }
+            if brief != nil {
+                Button("Re-analyze") { Task { await analyze(force: true) } }
+            }
             Button("Copy transcript") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(entry.cleanedText, forType: .string)
@@ -270,6 +323,30 @@ struct HistoryCard: View {
             }
             Divider()
             Button("Delete", role: .destructive, action: onDelete)
+        }
+    }
+
+    private func analyze(force: Bool) async {
+        if !force, let existing = await BriefStore.shared.brief(for: entry.id) {
+            brief = existing
+            showBrief = true
+            return
+        }
+        analyzing = true
+        analyzeError = nil
+        showBrief = true
+        defer { analyzing = false }
+        do {
+            let result = try await OllamaClient.shared.analyzeMeeting(
+                transcript: entry.cleanedText,
+                titleHint: "Shrava history entry \(entry.timestamp.formatted())"
+            )
+            try await BriefStore.shared.save(result, for: entry.id)
+            brief = result
+        } catch {
+            analyzeError = error.localizedDescription
+            // Keep sheet open only if we already had a brief; otherwise dismiss empty loading sheet
+            if brief == nil { showBrief = false }
         }
     }
 }

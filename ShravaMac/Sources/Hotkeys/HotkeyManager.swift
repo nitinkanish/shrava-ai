@@ -18,12 +18,38 @@ final class HotkeyManager {
     private var runLoopSource: CFRunLoopSource?
     private var isHotkeyPressed = false
     
+    /// Modifier-only preset (Control+Option) uses keyCode 0 with non-zero modifiers.
+    private var isModifierCombo: Bool {
+        SettingsManager.shared.settings.hotkeyKeyCode == 0 && SettingsManager.shared.settings.hotkeyModifiers != 0
+    }
+
     private var targetKeyCode: UInt16 {
-        let k = UInt16(SettingsManager.shared.settings.hotkeyKeyCode); return k == 0 ? 63 : k
+        let k = UInt16(SettingsManager.shared.settings.hotkeyKeyCode)
+        if isModifierCombo { return 0 }
+        return k == 0 ? 63 : k
     }
     
     private var targetModifiers: CGEventFlags {
         CGEventFlags(rawValue: UInt64(SettingsManager.shared.settings.hotkeyModifiers))
+    }
+
+    private var handsFreeAllowed: Bool {
+        SettingsManager.shared.settings.handsFreeEnabled
+    }
+
+    /// Modifier keys that arrive via flagsChanged (Fn / Right Option / Right Command).
+    private var isFlagsHotkey: Bool {
+        let k = targetKeyCode
+        return k == 63 || k == 61 || k == 54
+    }
+
+    private func isFlagsKeyPressed(keyCode: UInt16, flags: CGEventFlags) -> Bool {
+        switch keyCode {
+        case 63: return flags.contains(.maskSecondaryFn)
+        case 61: return flags.contains(.maskAlternate) // Right Option also sets maskAlternate
+        case 54: return flags.contains(.maskCommand)
+        default: return false
+        }
     }
     
     private init() {}
@@ -50,7 +76,9 @@ final class HotkeyManager {
             callback: callback,
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            NSLog("Shrava: event tap failed (trusted=\(AXIsProcessTrusted())), retrying in 2s")
+            let trusted = AXIsProcessTrusted()
+            NSLog("Shrava: event tap failed (trusted=\(trusted)), retrying in 2s")
+            writeLaunchStatus(trusted: trusted, note: "event_tap_failed")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.register() }
             return
         }
@@ -59,9 +87,19 @@ final class HotkeyManager {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
-        NSLog("Shrava: hotkey registered trusted=\(AXIsProcessTrusted()) key=\(targetKeyCode)")
+        let trusted = AXIsProcessTrusted()
+        NSLog("Shrava: hotkey registered trusted=\(trusted) key=\(targetKeyCode)")
+        writeLaunchStatus(trusted: trusted, note: "hotkey_registered")
     }
     
+
+    private func writeLaunchStatus(trusted: Bool, note: String) {
+        let statusURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Shrava/launch-status.txt")
+        try? FileManager.default.createDirectory(at: statusURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? "trusted=\(trusted)\nnote=\(note)\nkey=\(targetKeyCode)\n".write(to: statusURL, atomically: true, encoding: .utf8)
+    }
+
     func unregister() {
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
@@ -81,12 +119,36 @@ final class HotkeyManager {
         }
         let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         
+        // Esc cancels an in-progress hold while waiting / recording start
+        if type == .keyDown && keyCode == 53 && isHotkeyPressed && !handsFree {
+            isHotkeyPressed = false
+            DispatchQueue.main.async { [weak self] in self?.onHotkeyCancel?() }
+            return nil
+        }
+
         if type == .flagsChanged {
-            if keyCode == 63 && targetKeyCode == 63 {
-                let fnPressed = event.flags.contains(.maskSecondaryFn)
-                
+            // Control+Option combo: both modifiers held
+            if isModifierCombo {
+                let relevant = event.flags.intersection([.maskControl, .maskAlternate, .maskShift, .maskCommand])
+                let comboDown = relevant.contains(.maskControl) && relevant.contains(.maskAlternate)
                 let now = Date()
-                if fnPressed && !isHotkeyPressed {
+                if comboDown && !isHotkeyPressed {
+                    isHotkeyPressed = true
+                    fnDownAt = now
+                    DispatchQueue.main.async { [weak self] in self?.onHotkeyDown?() }
+                    return nil
+                } else if !comboDown && isHotkeyPressed {
+                    isHotkeyPressed = false
+                    DispatchQueue.main.async { [weak self] in self?.onHotkeyUp?() }
+                    return nil
+                }
+                return Unmanaged.passUnretained(event)
+            }
+
+            if isFlagsHotkey && keyCode == targetKeyCode {
+                let pressed = isFlagsKeyPressed(keyCode: keyCode, flags: event.flags)
+                let now = Date()
+                if pressed && !isHotkeyPressed {
                     isHotkeyPressed = true
                     fnDownAt = now
                     if handsFree {
@@ -94,7 +156,7 @@ final class HotkeyManager {
                         ignoreNextUp = true
                         NSLog("Shrava: hands-free stop")
                         DispatchQueue.main.async { [weak self] in self?.onHotkeyUp?() }
-                    } else if let pending = pendingCancel {
+                    } else if handsFreeAllowed, let pending = pendingCancel {
                         pending.cancel(); pendingCancel = nil
                         handsFree = true
                         ignoreNextUp = true
@@ -102,16 +164,20 @@ final class HotkeyManager {
                     } else {
                         DispatchQueue.main.async { [weak self] in self?.onHotkeyDown?() }
                     }
-                } else if !fnPressed && isHotkeyPressed {
+                } else if !pressed && isHotkeyPressed {
                     isHotkeyPressed = false
                     if ignoreNextUp { ignoreNextUp = false; return nil }
                     if now.timeIntervalSince(fnDownAt) < 0.3 {
-                        let work = DispatchWorkItem { [weak self] in
-                            self?.pendingCancel = nil
-                            self?.onHotkeyCancel?()
+                        if handsFreeAllowed {
+                            let work = DispatchWorkItem { [weak self] in
+                                self?.pendingCancel = nil
+                                self?.onHotkeyCancel?()
+                            }
+                            pendingCancel = work
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
+                        } else {
+                            DispatchQueue.main.async { [weak self] in self?.onHotkeyCancel?() }
                         }
-                        pendingCancel = work
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: work)
                     } else {
                         DispatchQueue.main.async { [weak self] in self?.onHotkeyUp?() }
                     }
@@ -121,7 +187,7 @@ final class HotkeyManager {
             return Unmanaged.passUnretained(event)
         }
         
-        guard keyCode == targetKeyCode else {
+        guard !isModifierCombo, !isFlagsHotkey, keyCode == targetKeyCode else {
             return Unmanaged.passUnretained(event)
         }
         
@@ -166,8 +232,15 @@ final class HotkeyManager {
         if flags.contains(.maskCommand) { parts.append("⌘") }
         
         let keyName: String
+        if keyCode == 0 && modifiers != 0 {
+            // Modifier-only combo already listed above
+            return parts.isEmpty ? "Modifiers" : parts.joined(separator: "")
+        }
+
         switch keyCode {
         case 63: keyName = "Fn"
+        case 61: keyName = "Right ⌥"
+        case 54: keyName = "Right ⌘"
         case 36: keyName = "Return"
         case 49: keyName = "Space"
         case 51: keyName = "Delete"
