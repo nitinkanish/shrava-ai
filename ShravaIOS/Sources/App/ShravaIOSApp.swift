@@ -5,6 +5,9 @@ import ShravaCore
 struct ShravaIOSApp: App {
     init() {
         LegacyMigration.runAll()
+        // Cold-start via LiveActivityIntent can run perform() before WindowGroup
+        // evaluates @StateObject — force singleton (and intent executor) now.
+        _ = IOSAppState.shared
     }
 
     @StateObject private var appState = IOSAppState.shared

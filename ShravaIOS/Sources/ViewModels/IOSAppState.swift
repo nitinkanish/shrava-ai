@@ -251,7 +251,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         }
     }
 
-    /// Intent/Control path: start recorder while AudioRecordingIntent grant is open; Live Activity is best-effort.
+    /// Intent/Control path: await Live Activity first, then start recorder while AudioRecordingIntent grant is open. Never return with mic active and no LA (AppIntents asserts).
     func startLongRecordingFromIntent(title: String = "Meeting") async {
         let reason = await startLongRecordingFromIntentReturningReason(title: title)
         RecordingIntentBridge.settle(reason: reason)
@@ -294,6 +294,21 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return "failed"
         }
 
+        // AudioRecordingIntent hard-crashes (EXC_BREAKPOINT / AppIntents assertion
+        // "performed with an active audio session but without a Live Activity") if
+        // perform() returns with the mic/session active and no Live Activity.
+        // So: await Activity.request BEFORE starting the recorder; on LA failure
+        // never leave audio armed — return liveActivity for foreground retry.
+        let laOK = await startLiveActivity(title: title)
+        debugLog("intent: Live Activity pre-recorder ok=\(laOK)")
+        if !laOK {
+            lastError = ActivityAuthorizationInfo().areActivitiesEnabled
+                ? "Couldn’t start Live Activity from background. Open Shrava and try again."
+                : "Turn on Live Activities for Shrava in Settings."
+            debugLog("intent: aborting start — no Live Activity (would crash AudioRecordingIntent)")
+            return "liveActivity"
+        }
+
         beginLongRecordingSession(title: title)
 
         let recorder = IOSAudioRecorder()
@@ -310,13 +325,8 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             startRecordingTimer()
             reloadRecordingControl()
             lastError = nil
-            debugLog("intent: recorder started ok")
+            debugLog("intent: recorder started ok (LA already active)")
             haptic(.medium)
-            Task { [weak self] in
-                guard let self else { return }
-                let laOK = await self.startLiveActivity(title: title)
-                self.debugLog("intent: Live Activity ok=\(laOK)")
-            }
             return "ok"
         } catch {
             if isInPhoneCall {
@@ -516,7 +526,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         let session = AVAudioSession.sharedInstance()
         let laEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
         let calls = PhoneCallMonitor.shared.debugDescriptionCalls
-        let msg = "START path=\(path) modelReady=\(modelReady) mic=\(hasMicrophonePermission) callActive=\(isInPhoneCall) calls=[\(calls)] laEnabled=\(laEnabled) otherAudio=\(session.isOtherAudioPlaying) cat=\(session.category.rawValue) mode=\(session.mode.rawValue) recording=\(isRecording)"
+        let bundle = Bundle.main.bundleIdentifier ?? "?"
+        let pid = ProcessInfo.processInfo.processIdentifier
+        let msg = "START path=\(path) modelReady=\(modelReady) mic=\(hasMicrophonePermission) callActive=\(isInPhoneCall) calls=[\(calls)] laEnabled=\(laEnabled) otherAudio=\(session.isOtherAudioPlaying) cat=\(session.category.rawValue) mode=\(session.mode.rawValue) recording=\(isRecording) bundle=\(bundle) pid=\(pid)"
         debugLog(msg)
         return msg
     }
@@ -837,7 +849,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                     )
                 }
                 group.addTask {
-                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    try await Task.sleep(nanoseconds: 3_000_000_000)
                     throw NSError(domain: "Shrava", code: -4, userInfo: [
                         NSLocalizedDescriptionKey: "Live Activity request timed out"
                     ])

@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import OSLog
 import ShravaCore
 import whisper
 
@@ -26,6 +27,10 @@ private struct TranscribeCheckpoint: Codable {
     var chunkIndex: Int
     var parts: [String]
     var framesRead: Int64
+}
+
+private enum WhisperChunkLog {
+    static let chunkLog = Logger(subsystem: "com.shrava.ios", category: "whisper")
 }
 
 /// Thin Swift wrapper around the whisper.cpp XCFramework for iOS.
@@ -367,6 +372,7 @@ final class IOSWhisper: @unchecked Sendable {
             } else if chunkFailed {
                 // Keep going — later chunks may still succeed; partial text is saved.
             }
+            WhisperChunkLog.chunkLog.debug("chunk=\(chunkIndex) frames=\(advanced) samples=\(samples.count) chars=\(chunkText.count) failed=\(chunkFailed) totalPartsChars=\(parts.joined(separator: " ").count)")
 
             chunkIndex += 1
             Self.saveCheckpoint(
@@ -382,6 +388,7 @@ final class IOSWhisper: @unchecked Sendable {
         }
 
         await progress(1)
+        WhisperChunkLog.chunkLog.info("transcribeFile done chunks=\(chunkIndex) dur=\(durationSeconds, format: .fixed(precision: 1)) chars=\(parts.joined(separator: " ").count) file=\(url.lastPathComponent, privacy: .public)")
 
         let original = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         if original.isEmpty {

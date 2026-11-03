@@ -33,7 +33,7 @@ enum RecordingIntentExecutor {
     static var handle: (@MainActor (RecordingIntentAction) async -> String)?
 }
 
-/// Waits inside `perform()` so AudioRecordingIntent’s mic grant stays open until recording actually starts.
+/// Waits inside `perform()` so AudioRecordingIntent’s mic grant stays open until recording AND Live Activity start.
 enum RecordingIntentBridge {
     static let timeout: TimeInterval = 15
 
@@ -119,11 +119,17 @@ public struct StartRecordingIntent: AppIntent, AudioRecordingIntent, LiveActivit
             )
             return .result(dialog: "Open Shrava to allow the microphone")
         case "liveActivity":
+            // ActivityKit often refuses Activity.request from a pure background launch.
+            // Hop to foreground (mic was never armed without LA — no AppIntents crash), then retry.
             try await continueInForeground(
-                IntentDialog("Turn on Live Activities for Shrava in Settings"),
+                IntentDialog("Opening Shrava to start Live Activity"),
                 alwaysConfirm: false
             )
-            return .result(dialog: "Enable Live Activities for Shrava")
+            let retry = await RecordingIntentBridge.dispatchAndWait(action: .start)
+            if retry == "ok" {
+                return .result(dialog: "Recording started")
+            }
+            return .result(dialog: "Enable Live Activities for Shrava in Settings, then try again")
         case "model":
             try await continueInForeground(
                 IntentDialog("Download the Whisper model in Shrava Settings"),
@@ -218,6 +224,16 @@ public struct FlipRecordingIntent: AppIntent, AudioRecordingIntent, LiveActivity
                 alwaysConfirm: false
             )
             return .result(dialog: "Open Shrava to allow the microphone")
+        case "liveActivity":
+            try await continueInForeground(
+                IntentDialog("Opening Shrava to start Live Activity"),
+                alwaysConfirm: false
+            )
+            let retry = await RecordingIntentBridge.dispatchAndWait(action: .start)
+            if retry == "ok" || retry == "started" {
+                return .result(dialog: "Recording started")
+            }
+            return .result(dialog: "Enable Live Activities for Shrava in Settings, then try again")
         case "model":
             try await continueInForeground(
                 IntentDialog("Download the Whisper model in Shrava Settings"),
