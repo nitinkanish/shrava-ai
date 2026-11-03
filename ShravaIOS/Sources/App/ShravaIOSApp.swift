@@ -32,6 +32,10 @@ struct ShravaIOSApp: App {
         switch url.host {
         case "record":
             appState.startRecordingFromKeyboard()
+        case "debug":
+            // shrava://debug/long|quick|intent — same code paths as UI / Control Center.
+            let path = url.pathComponents.dropFirst().first?.lowercased() ?? "long"
+            appState.debugStart(path: path)
         case "history":
             appState.currentTab = .history
         case "dictionary":

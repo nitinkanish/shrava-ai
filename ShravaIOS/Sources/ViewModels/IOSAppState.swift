@@ -179,7 +179,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         }
     }
 
-    /// Intent/Control path: Live Activity first, then recorder, then settle (keeps AudioRecordingIntent grant open).
+    /// Intent/Control path: start recorder while AudioRecordingIntent grant is open; Live Activity is best-effort.
     func startLongRecordingFromIntent(title: String = "Meeting") async {
         if isRecording && isLongRecording {
             RecordingIntentBridge.settle(reason: "ok")
@@ -190,45 +190,42 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return
         }
 
-        // Live Activities must be enabled — required by AudioRecordingIntent.
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            RecordingIntentBridge.settle(reason: "liveActivity")
-            return
+        _ = startDiagnostics(path: "intent")
+
+        // Live Activities help Dynamic Island / Control Center state, but must not hard-block recording
+        // when ActivityKit fails under free/personal-team signing.
+        let laEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
+        if !laEnabled {
+            debugLog("intent: Live Activities disabled in Settings")
         }
 
         if !hasMicrophonePermission {
-            // Can't prompt from background.
+            lastError = "Microphone permission not granted"
+            debugLog("intent: mic permission missing")
             RecordingIntentBridge.settle(reason: "permission")
             return
         }
         refreshModelStatus()
         guard modelReady else {
+            lastError = "Download the on-device Whisper model in Settings or Onboarding first."
+            debugLog("intent: model missing")
             RecordingIntentBridge.settle(reason: "model")
             return
         }
 
-        Self.log.info("startLongRecordingFromIntent callActive=\(self.isInPhoneCall) modelReady=\(self.modelReady)")
         if isInPhoneCall {
             pendingStartAfterCall = true
             pendingStartTitle = title
             pendingStartFromIntent = true
             lastError = RecordingError.callInProgress.errorDescription
+            debugLog("intent: deferred — call active [\(PhoneCallMonitor.shared.debugDescriptionCalls)]")
             RecordingIntentBridge.settle(reason: "failed")
             return
         }
 
         beginLongRecordingSession(title: title)
 
-        // 1) Live Activity FIRST (AudioRecordingIntent contract).
-        let laOK = await startLiveActivity(title: title)
-        guard laOK else {
-            isRecording = false
-            isLongRecording = false
-            RecordingIntentBridge.settle(reason: "liveActivity")
-            return
-        }
-
-        // 2) Start recorder while intent perform() is still waiting.
+        // Recorder first while AudioRecordingIntent mic grant is open; LA is best-effort after.
         let recorder = IOSAudioRecorder()
         attachRecorderDelegate(recorder)
         audioRecorder = recorder
@@ -242,10 +239,16 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             UIApplication.shared.isIdleTimerDisabled = true
             startRecordingTimer()
             reloadRecordingControl()
+            lastError = nil
+            debugLog("intent: recorder started ok")
             RecordingIntentBridge.settle(reason: "ok")
             haptic(.medium)
+            Task { [weak self] in
+                guard let self else { return }
+                let laOK = await self.startLiveActivity(title: title)
+                self.debugLog("intent: Live Activity ok=\(laOK)")
+            }
         } catch {
-            // If activation failed because a call raced in, defer instead of fatal error.
             if isInPhoneCall {
                 audioRecorder?.cancelRecording()
                 audioRecorder = nil
@@ -257,6 +260,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 pendingStartTitle = title
                 pendingStartFromIntent = true
                 lastError = RecordingError.callInProgress.errorDescription
+                debugLog("intent: call raced in during start")
                 RecordingIntentBridge.settle(reason: "failed")
                 return
             }
@@ -266,8 +270,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             isRecording = false
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
-            Self.log.error("startLongRecordingFromIntent failed: \(error.localizedDescription, privacy: .public)")
-            lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
+            let detail = Self.formatError(error)
+            debugLog("intent: recorder failed \(detail)")
+            lastError = "Couldn't start yet: \(detail). Try again in a moment."
             RecordingIntentBridge.settle(reason: "failed")
         }
     }
@@ -330,7 +335,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             )
             await finishTranscription(result)
         } catch {
-            lastError = "Error: \(error.localizedDescription)"
+            lastError = "Error: \(Self.formatError(error))"
             notifyError()
         }
     }
@@ -354,6 +359,23 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         Task { await startLongRecording() }
     }
 
+    /// Debug URL helpers so device tests can hit the exact same code paths as UI / intents.
+    func debugStart(path: String) {
+        currentTab = .record
+        Task {
+            switch path {
+            case "long", "in-app":
+                await startLongRecording()
+            case "quick":
+                await startRecording()
+            case "intent":
+                await startLongRecordingFromIntent()
+            default:
+                await startLongRecording()
+            }
+        }
+    }
+
     func checkForPendingTranscription() {
         // Keyboard reads shared_transcription.txt when returning to the host app.
     }
@@ -366,9 +388,51 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         AVAudioApplication.shared.recordPermission == .granted
     }
 
-
     /// True when a cellular/FaceTime call currently owns the mic.
     private var isInPhoneCall: Bool { PhoneCallMonitor.shared.hasActiveCall }
+
+    /// Human-readable NSError domain/code for on-screen diagnostics.
+    static func formatError(_ error: Error) -> String {
+        let ns = error as NSError
+        let desc = error.localizedDescription
+        if ns.domain == "Shrava" || (ns.domain.isEmpty && ns.code == 0) {
+            return desc
+        }
+        return "\(desc) [\(ns.domain) \(ns.code)]"
+    }
+
+    private var debugLogURL: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        return docs.appendingPathComponent("shrava-debug.log")
+    }
+
+    private func debugLog(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
+        Self.log.info("\(message, privacy: .public)")
+        print("SHRAVA \(message)")
+        NSLog("SHRAVA %@", message)
+        let url = debugLogURL
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: url.path) {
+                if let handle = try? FileHandle(forWritingTo: url) {
+                    defer { try? handle.close() }
+                    try? handle.seekToEnd()
+                    try? handle.write(contentsOf: data)
+                }
+            } else {
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    private func startDiagnostics(path: String) -> String {
+        let session = AVAudioSession.sharedInstance()
+        let laEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
+        let calls = PhoneCallMonitor.shared.debugDescriptionCalls
+        let msg = "START path=\(path) modelReady=\(modelReady) mic=\(hasMicrophonePermission) callActive=\(isInPhoneCall) calls=[\(calls)] laEnabled=\(laEnabled) otherAudio=\(session.isOtherAudioPlaying) cat=\(session.category.rawValue) mode=\(session.mode.rawValue) recording=\(isRecording)"
+        debugLog(msg)
+        return msg
+    }
 
     private func beginLongRecordingSession(title: String) {
         isRecording = true
@@ -445,7 +509,11 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     func startRecording() async {
         guard !isRecording else { return }
-        guard await prepareToRecord() else { return }
+        _ = startDiagnostics(path: "quick")
+        guard await prepareToRecord() else {
+            debugLog("quick: prepareToRecord failed lastError=\(lastError ?? "?")")
+            return
+        }
 
         isRecording = true
         isLongRecording = false
@@ -463,9 +531,12 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             try await audioRecorder?.startRecording(mode: .quick)
             startRecordingTimer()
             haptic(.medium)
+            debugLog("quick: recorder started ok")
         } catch {
             isRecording = false
-            lastError = "Failed to start recording: \(error.localizedDescription)"
+            let detail = Self.formatError(error)
+            debugLog("quick: failed \(detail)")
+            lastError = "Failed to start recording: \(detail)"
         }
     }
 
@@ -473,26 +544,25 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     func startLongRecording(title: String = "Meeting") async {
         guard !isRecording else { return }
-        guard await prepareToRecord() else { return }
+        _ = startDiagnostics(path: "in-app-long")
+        guard await prepareToRecord() else {
+            debugLog("in-app-long: prepareToRecord failed lastError=\(lastError ?? "?")")
+            return
+        }
 
-        Self.log.info("startLongRecording callActive=\(self.isInPhoneCall) modelReady=\(self.modelReady)")
         if isInPhoneCall {
             pendingStartAfterCall = true
             pendingStartTitle = title
             pendingStartFromIntent = false
             lastError = RecordingError.callInProgress.errorDescription
+            debugLog("in-app-long: deferred — call active [\(PhoneCallMonitor.shared.debugDescriptionCalls)]")
             return
         }
 
         beginLongRecordingSession(title: title)
 
-        // Live Activity before recorder (same contract as AudioRecordingIntent).
-        let laOK = await startLiveActivity(title: title)
-        if !laOK {
-            // Still allow in-app recording if Live Activities are off — warn but continue.
-            lastError = "Live Activities are off — enable them for Dynamic Island + shortcuts."
-        }
-
+        // Recorder FIRST — Live Activity must never block in-app capture (ActivityKit is flaky
+        // with free/personal-team signing and can hang several seconds before failing).
         let recorder = IOSAudioRecorder()
         attachRecorderDelegate(recorder)
         audioRecorder = recorder
@@ -502,6 +572,14 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             startRecordingTimer()
             reloadRecordingControl()
             haptic(.medium)
+            lastError = nil
+            debugLog("in-app-long: recorder started ok")
+            // Best-effort Dynamic Island after mic is rolling.
+            Task { [weak self] in
+                guard let self else { return }
+                let laOK = await self.startLiveActivity(title: title)
+                self.debugLog("in-app-long: Live Activity ok=\(laOK)")
+            }
         } catch {
             if isInPhoneCall {
                 audioRecorder?.cancelRecording()
@@ -514,6 +592,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 pendingStartTitle = title
                 pendingStartFromIntent = false
                 lastError = RecordingError.callInProgress.errorDescription
+                debugLog("in-app-long: call raced in during start")
                 return
             }
             audioRecorder?.cancelRecording()
@@ -522,9 +601,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
             await endLiveActivity()
-            // Soft message — activation often fails transiently right after a call.
-            Self.log.error("startLongRecording failed: \(error.localizedDescription, privacy: .public)")
-            lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
+            let detail = Self.formatError(error)
+            debugLog("in-app-long: failed \(detail)")
+            lastError = "Couldn't start yet: \(detail). Try again in a moment."
         }
     }
 
@@ -584,7 +663,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             )
             await finishTranscription(result)
         } catch {
-            lastError = "Error: \(error.localizedDescription)"
+            lastError = "Error: \(Self.formatError(error))"
             notifyError()
         }
     }
@@ -633,7 +712,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             // Keep the m4a for now in Documents/Recordings (user may want it); optional cleanup:
             // try? FileManager.default.removeItem(at: url)
         } catch {
-            lastError = "Error: \(error.localizedDescription)"
+            lastError = "Error: \(Self.formatError(error))"
             notifyError()
         }
     }
@@ -660,18 +739,44 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     @discardableResult
     private func startLiveActivity(title: String) async -> Bool {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            debugLog("LA: areActivitiesEnabled=false")
+            return false
+        }
+        // Dismiss stale activities so a prior failed session cannot look "already recording".
+        for activity in Activity<RecordingActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        liveActivity = nil
+
         let attributes = RecordingActivityAttributes(title: title)
         let state = RecordingActivityAttributes.ContentState(timerStart: Date(), isPaused: false, frozenElapsed: 0)
         do {
-            liveActivity = try Activity.request(
-                attributes: attributes,
-                content: .init(state: state, staleDate: nil),
-                pushType: nil
-            )
-            return liveActivity != nil
+            // Activity.request is synchronous but can stall under free signing — bound it.
+            let activity = try await withThrowingTaskGroup(of: Activity<RecordingActivityAttributes>.self) { group in
+                group.addTask { @MainActor in
+                    try Activity.request(
+                        attributes: attributes,
+                        content: .init(state: state, staleDate: nil),
+                        pushType: nil
+                    )
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    throw NSError(domain: "Shrava", code: -4, userInfo: [
+                        NSLocalizedDescriptionKey: "Live Activity request timed out"
+                    ])
+                }
+                let first = try await group.next()!
+                group.cancelAll()
+                return first
+            }
+            liveActivity = activity
+            debugLog("LA: request ok id=\(activity.id)")
+            return true
         } catch {
-            print("Live Activity start failed: \(error)")
+            let detail = Self.formatError(error)
+            debugLog("LA: request failed \(detail)")
             return false
         }
     }
@@ -716,12 +821,14 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             let granted = await requestMicrophonePermission()
             if !granted {
                 lastError = "Microphone permission not granted"
+                debugLog("prepare: mic denied")
                 return false
             }
         }
         refreshModelStatus()
         guard modelReady else {
             lastError = "Download the on-device Whisper model in Settings or Onboarding first."
+            debugLog("prepare: model not ready status=\(String(describing: modelManager.status))")
             return false
         }
         return true
