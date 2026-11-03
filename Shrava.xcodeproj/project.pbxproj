@@ -40,6 +40,7 @@
 		CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */; };
 		CC42A8CF0809B7E533D8D7A2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */; };
 		CC850739A352435E5E4F1044 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */; };
+		DFD648EA6A03F88FA6F7F47C /* ShravaTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2158C262EA7175DB24133D6 /* ShravaTheme.swift */; };
 		EAF6DA7848F8701302333D01 /* ShravaMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5422ACDEAB3927E81D16B33 /* ShravaMacApp.swift */; };
 		EB4F27D3E21B9B5CAD85D945 /* IOSOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722D86D86475E8DA29B1DCAF /* IOSOnboardingView.swift */; };
 		F06BAEC76F498D39AC14DF5E /* TextInserter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26915544870F461C2B05BB87 /* TextInserter.swift */; };
@@ -108,6 +109,7 @@
 		AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AAB1E0377A1DAF0068C590DC /* LocalWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisper.swift; sourceTree = "<group>"; };
 		ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppState.swift; sourceTree = "<group>"; };
+		B2158C262EA7175DB24133D6 /* ShravaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaTheme.swift; sourceTree = "<group>"; };
 		BD3DE7136B9BBE91C77E012B /* DictionaryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryWindowController.swift; sourceTree = "<group>"; };
 		BFD45B8B0E4B9DA6D3E7DD50 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		C66053F0D038A004FF6E9560 /* FloatingIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingIndicator.swift; sourceTree = "<group>"; };
@@ -301,6 +303,14 @@
 			path = ShravaMac;
 			sourceTree = "<group>";
 		};
+		AF6614EFB8AE97324656F5F2 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				B2158C262EA7175DB24133D6 /* ShravaTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
 		B670E837F0B72406BB73D8C6 /* Recording */ = {
 			isa = PBXGroup;
 			children = (
@@ -345,6 +355,7 @@
 			children = (
 				D6AEDE5CDC8D99C2079A0A91 /* App */,
 				13172E55E9EBB9B1D2599556 /* Recording */,
+				AF6614EFB8AE97324656F5F2 /* Theme */,
 				67E940C10D7D85444D1954BE /* Transcription */,
 				43BE8E5D8C4DE8008C7A1F7E /* ViewModels */,
 				C2454F49F2E9C984CBACFE10 /* Views */,
@@ -561,6 +572,7 @@
 				F937C5AE05713B1F2FD6C592 /* RecordingView.swift in Sources */,
 				116267B0773B7B3C9818F21F /* SharedConstants.swift in Sources */,
 				CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */,
+				DFD648EA6A03F88FA6F7F47C /* ShravaTheme.swift in Sources */,
 				A565641BA4BFB249E7A07C76 /* WhisperModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -633,7 +645,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
@@ -650,7 +662,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShravaKeyboard/Resources/ShravaKeyboard.entitlements;
 				INFOPLIST_FILE = ShravaKeyboard/Resources/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -717,7 +729,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
@@ -756,7 +768,7 @@
 					"\"Vendor\"",
 				);
 				INFOPLIST_FILE = ShravaIOS/Resources/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -780,7 +792,7 @@
 					"\"Vendor\"",
 				);
 				INFOPLIST_FILE = ShravaIOS/Resources/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -811,7 +823,7 @@
 			buildSettings = {
 				CODE_SIGN_ENTITLEMENTS = ShravaKeyboard/Resources/ShravaKeyboard.entitlements;
 				INFOPLIST_FILE = ShravaKeyboard/Resources/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",

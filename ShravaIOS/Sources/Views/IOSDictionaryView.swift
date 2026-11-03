@@ -8,6 +8,8 @@ struct IOSDictionaryView: View {
     
     var body: some View {
         NavigationStack {
+            ZStack {
+                ShravaTheme.softBackground.opacity(0.35).ignoresSafeArea()
             Group {
                 if entries.isEmpty {
                     emptyState
@@ -29,12 +31,14 @@ struct IOSDictionaryView: View {
                     }
                 }
             }
+            }
             .navigationTitle("Dictionary")
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button(action: { showingAddSheet = true }) {
                         Image(systemName: "plus")
                     }
+                    .buttonStyle(.glass)
                 }
             }
             .sheet(isPresented: $showingAddSheet) {
@@ -50,22 +54,24 @@ struct IOSDictionaryView: View {
     
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "character.book.closed")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-            
+            Image(systemName: "character.book.closed.fill")
+                .font(.system(size: 56))
+                .foregroundStyle(ShravaTheme.purple)
+                .padding(28)
+                .shravaGlass(in: Circle())
+
             Text("No Dictionary Entries")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
+                .font(.title2.weight(.semibold))
+
             Text("Add words that should be transcribed\ndifferently, like names or technical terms.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-            
+
             Button("Add Entry") {
                 showingAddSheet = true
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
+            .tint(ShravaTheme.purple)
         }
     }
     

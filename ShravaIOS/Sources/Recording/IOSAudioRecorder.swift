@@ -5,6 +5,15 @@ final class IOSAudioRecorder {
     private var audioRecorder: AVAudioRecorder?
     private var recordingURL: URL?
 
+    /// Normalized 0...1 level from the recorder meters.
+    var normalizedLevel: Float {
+        guard let audioRecorder, audioRecorder.isRecording else { return 0 }
+        audioRecorder.updateMeters()
+        let power = audioRecorder.averagePower(forChannel: 0) // typically -160...0
+        let clamped = max(-50, min(0, power))
+        return (clamped + 50) / 50
+    }
+
     func startRecording() async throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .allowBluetooth])
@@ -14,7 +23,7 @@ final class IOSAudioRecorder {
             .appendingPathComponent(UUID().uuidString + ".wav")
         recordingURL = url
 
-        // 16 kHz mono linear PCM — matches Whisper's expected input (resampled to float in IOSWhisper).
+        // 16 kHz mono linear PCM — matches Whisper's expected input.
         let settings: [String: Any] = [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVSampleRateKey: 16000.0,

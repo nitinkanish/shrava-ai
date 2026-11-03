@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.shrava
   deploymentTarget:
     macOS: "14.0"
-    iOS: "18.0"
+    iOS: "26.1"
   xcodeVersion: "15.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
@@ -74,7 +74,7 @@ targets:
   ShravaIOS:
     type: application
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.1"
     sources:
       - path: ShravaIOS/Sources
       - path: Shared
@@ -136,7 +136,7 @@ targets:
   ShravaKeyboard:
     type: app-extension
     platform: iOS
-    deploymentTarget: "18.0"
+    deploymentTarget: "26.1"
     sources:
       - path: ShravaKeyboard/Sources
       - path: Shared

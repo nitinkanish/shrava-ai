@@ -9,18 +9,42 @@ struct IOSSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                modelSection
-                meetingBriefSection
-                languageSection
-                behaviorSection
-                syncSection
-                aboutSection
+            ZStack {
+                ShravaTheme.softBackground.opacity(0.45).ignoresSafeArea()
+                Form {
+                    aboutHero
+                    modelSection
+                    meetingBriefSection
+                    languageSection
+                    behaviorSection
+                    syncSection
+                    aboutSection
+                }
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Settings")
-            .onAppear {
-                appState.refreshModelStatus()
+            .onAppear { appState.refreshModelStatus() }
+        }
+    }
+
+    private var aboutHero: some View {
+        Section {
+            VStack(spacing: 12) {
+                Image("ShravaLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: ShravaTheme.purple.opacity(0.35), radius: 16, y: 8)
+                Text("Shrava")
+                    .font(.title2.weight(.bold))
+                Text(ShravaTheme.tagline)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .listRowBackground(Color.clear)
         }
     }
 
@@ -42,13 +66,15 @@ struct IOSSettingsView: View {
             if let downloadError {
                 Text(downloadError)
                     .font(.footnote)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(ShravaTheme.coral)
             }
 
             if !appState.modelReady {
                 Button(isDownloading ? "Downloading…" : "Download Model") {
                     Task { await downloadModel() }
                 }
+                .buttonStyle(.glassProminent)
+                .tint(ShravaTheme.purple)
                 .disabled(isDownloading)
             } else {
                 Label("Model ready for offline transcription", systemImage: "checkmark.circle.fill")
@@ -75,7 +101,6 @@ struct IOSSettingsView: View {
         case .failed(let m): return "Failed: \(m)"
         }
     }
-
 
     private var meetingBriefSection: some View {
         Section {
@@ -105,9 +130,7 @@ struct IOSSettingsView: View {
         } header: {
             Text("Transcription")
         }
-        .onChange(of: settings.language) { _, _ in
-            saveSettings()
-        }
+        .onChange(of: settings.language) { _, _ in saveSettings() }
     }
 
     private var behaviorSection: some View {
@@ -145,12 +168,11 @@ struct IOSSettingsView: View {
                 Text(ShravaCore.version)
                     .foregroundStyle(.secondary)
             }
-
             NavigationLink("Keyboard Setup") {
                 KeyboardSetupView()
             }
         } header: {
-            Text("About Shrava")
+            Text("About")
         }
     }
 
@@ -193,6 +215,8 @@ struct KeyboardSetupView: View {
                         UIApplication.shared.open(url)
                     }
                 }
+                .buttonStyle(.glassProminent)
+                .tint(ShravaTheme.purple)
             }
 
             Section {
@@ -217,14 +241,13 @@ struct SetupStep: View {
                 .font(.caption)
                 .fontWeight(.bold)
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(.blue))
+                .background(Circle().fill(ShravaTheme.purple))
                 .foregroundStyle(.white)
 
             Text(text)
         }
     }
 }
-
 
 struct IOSAnalysisSettingsView: View {
     @State private var mode: OllamaEndpointMode = AnalysisSettingsStore.load().endpointMode
@@ -266,6 +289,8 @@ struct IOSAnalysisSettingsView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button("Save to Keychain") { saveKey() }
+                    .buttonStyle(.glassProminent)
+                    .tint(ShravaTheme.purple)
                     .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 if keyPresent {
                     Button("Remove key", role: .destructive) {
@@ -284,11 +309,12 @@ struct IOSAnalysisSettingsView: View {
                 } label: {
                     if testing { ProgressView() } else { Text("Test connection") }
                 }
+                .buttonStyle(.glass)
                 .disabled(testing)
                 if let testMessage {
                     Text(testMessage)
                         .font(.caption)
-                        .foregroundStyle(testOK ? .green : .red)
+                        .foregroundStyle(testOK ? .green : ShravaTheme.coral)
                 }
             }
         }

@@ -15,8 +15,12 @@ final class IOSAppState: ObservableObject {
     @Published var launchedFromKeyboard = false
     @Published var currentTab: Tab = .record
     @Published var modelReady = false
+    /// Live mic level 0...1 while recording.
+    @Published var audioLevel: Float = 0
+    /// Rolling waveform bars (0...1) for the record UI.
+    @Published var waveformSamples: [Float] = Array(repeating: 0.08, count: 32)
 
-    enum Tab {
+    enum Tab: Hashable {
         case record
         case history
         case dictionary
@@ -100,6 +104,8 @@ final class IOSAppState: ObservableObject {
         recordingDuration = 0
         lastError = nil
         showingResult = false
+        audioLevel = 0
+        waveformSamples = Array(repeating: 0.08, count: 32)
 
         audioRecorder = IOSAudioRecorder()
         do {
@@ -122,6 +128,7 @@ final class IOSAppState: ObservableObject {
         stopRecordingTimer()
         isRecording = false
         isProcessing = true
+        audioLevel = 0
 
         if SettingsManager.shared.settings.hapticFeedback {
             let generator = UIImpactFeedbackGenerator(style: .light)
@@ -208,9 +215,16 @@ final class IOSAppState: ObservableObject {
     }
 
     private func startRecordingTimer() {
-        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        recordingTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.recordingDuration += 0.1
+                guard let self else { return }
+                self.recordingDuration += 0.08
+                let level = self.audioRecorder?.normalizedLevel ?? 0
+                self.audioLevel = level
+                var samples = self.waveformSamples
+                samples.removeFirst()
+                samples.append(max(0.06, min(1, level)))
+                self.waveformSamples = samples
             }
         }
     }
@@ -219,4 +233,17 @@ final class IOSAppState: ObservableObject {
         recordingTimer?.invalidate()
         recordingTimer = nil
     }
+    /// Debug/screenshot helper: `defaults write com.shrava.ios screenshotTab history`
+    func applyScreenshotTabIfNeeded() {
+        guard let raw = UserDefaults.standard.string(forKey: "screenshotTab") else { return }
+        UserDefaults.standard.removeObject(forKey: "screenshotTab")
+        switch raw.lowercased() {
+        case "record": currentTab = .record
+        case "history": currentTab = .history
+        case "dictionary": currentTab = .dictionary
+        case "settings": currentTab = .settings
+        default: break
+        }
+    }
+
 }
