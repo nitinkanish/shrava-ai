@@ -1,8 +1,10 @@
 import SwiftUI
 import AVFoundation
+import CoreMedia
 import ActivityKit
 import WidgetKit
 import CallKit
+import BackgroundTasks
 import OSLog
 import ShravaCore
 
@@ -16,6 +18,10 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     @Published var isPaused = false
     @Published var isProcessing = false
     @Published var transcriptionProgress: Double = 0
+    /// Bumped whenever History changes so lists reload (pending → complete).
+    @Published var historyEpoch: Int = 0
+    /// After stop, open this history item when the user taps into the app.
+    @Published var pendingOpenHistoryID: UUID?
     @Published var lastTranscription: String = ""
     @Published var lastError: String?
     @Published var recordingDuration: TimeInterval = 0
@@ -47,6 +53,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     private var pendingStartFromIntent = false
     /// Gap markers to inject into the transcript (phone-call pauses, etc.).
     private var transcriptGapMarkers: [String] = []
+    private var transcribeBgTask: UIBackgroundTaskIdentifier = .invalid
+    private static let continuedProcessingTaskID = "com.shrava.ios.transcribe"
+    private var continuedProcessingRegistered = false
 
     let dictionary: PersonalDictionary
     let historyManager: HistoryManager
@@ -59,9 +68,51 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         modelReady = modelManager.isReady
         setupCloudSync()
         setupAudioSession()
+        registerIntentExecutor()
         observeStopIntent()
         setupCallMonitor()
         observeLifecycleForResume()
+        registerContinuedProcessingTask()
+        Task { @MainActor in
+            await self.recoverOrphanedRecordings()
+            await self.resumePendingTranscriptions()
+        }
+    }
+
+    private func registerIntentExecutor() {
+        RecordingIntentExecutor.handle = { [weak self] action in
+            guard let self else { return "failed" }
+            return await self.performRecordingIntent(action)
+        }
+    }
+
+    private func registerContinuedProcessingTask() {
+        guard !continuedProcessingRegistered else { return }
+        continuedProcessingRegistered = true
+        BGTaskScheduler.shared.register(
+            forTaskWithIdentifier: Self.continuedProcessingTaskID,
+            using: nil
+        ) { task in
+            guard let task = task as? BGContinuedProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            // Work is driven from stopLongRecording*; this handler exists so the
+            // system can reinstate progress UI if the process was relaunched.
+            task.expirationHandler = {
+                task.setTaskCompleted(success: false)
+            }
+            task.progress.totalUnitCount = 100
+            task.progress.completedUnitCount = 0
+            Task { @MainActor in
+                // If we still have a pending item, keep reporting; otherwise finish.
+                if IOSAppState.shared.isProcessing {
+                    // Leave running until transcribe path completes / expires.
+                } else {
+                    task.setTaskCompleted(success: true)
+                }
+            }
+        }
     }
 
     private func setupCloudSync() {
@@ -163,37 +214,57 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     private func handleRecordingIntent(_ raw: String) async {
-        switch raw {
-        case RecordingIntentAction.start.rawValue:
-            await startLongRecordingFromIntent()
-        case RecordingIntentAction.stop.rawValue:
-            await stopLongRecordingFromIntent()
-        case RecordingIntentAction.toggle.rawValue:
-            if isRecording && isLongRecording {
-                await stopLongRecordingFromIntent()
-            } else {
-                await startLongRecordingFromIntent()
-            }
-        default:
+        guard let action = RecordingIntentAction(rawValue: raw) else {
             RecordingIntentBridge.settle(reason: "unknown")
+            return
+        }
+        let reason = await performRecordingIntent(action)
+        RecordingIntentBridge.settle(reason: reason)
+    }
+
+    /// Shared by LiveActivityIntent executor and NotificationCenter bridge.
+    @discardableResult
+    func performRecordingIntent(_ action: RecordingIntentAction) async -> String {
+        switch action {
+        case .start:
+            return await startLongRecordingFromIntentReturningReason()
+        case .stop:
+            return await stopLongRecordingFromIntentReturningReason()
+        case .toggle:
+            if (isRecording && isLongRecording) || RecordingIntentBridge.isLiveRecordingActive {
+                let r = await stopLongRecordingFromIntentReturningReason()
+                return r == "ok" ? "stopped" : r
+            }
+            let r = await startLongRecordingFromIntentReturningReason()
+            return r == "ok" ? "started" : r
+        case .pause:
+            guard isRecording, isLongRecording, !isPaused else { return "ok" }
+            await pauseLongRecording()
+            return "ok"
+        case .resume:
+            guard isRecording, isLongRecording, isPaused else { return "ok" }
+            await resumeLongRecording()
+            return "ok"
         }
     }
 
     /// Intent/Control path: start recorder while AudioRecordingIntent grant is open; Live Activity is best-effort.
     func startLongRecordingFromIntent(title: String = "Meeting") async {
+        let reason = await startLongRecordingFromIntentReturningReason(title: title)
+        RecordingIntentBridge.settle(reason: reason)
+    }
+
+    @discardableResult
+    func startLongRecordingFromIntentReturningReason(title: String = "Meeting") async -> String {
         if isRecording && isLongRecording {
-            RecordingIntentBridge.settle(reason: "ok")
-            return
+            return "ok"
         }
         guard !isRecording else {
-            RecordingIntentBridge.settle(reason: "busy")
-            return
+            return "busy"
         }
 
         _ = startDiagnostics(path: "intent")
 
-        // Live Activities help Dynamic Island / Control Center state, but must not hard-block recording
-        // when ActivityKit fails under free/personal-team signing.
         let laEnabled = ActivityAuthorizationInfo().areActivitiesEnabled
         if !laEnabled {
             debugLog("intent: Live Activities disabled in Settings")
@@ -202,15 +273,13 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         if !hasMicrophonePermission {
             lastError = "Microphone permission not granted"
             debugLog("intent: mic permission missing")
-            RecordingIntentBridge.settle(reason: "permission")
-            return
+            return "permission"
         }
         refreshModelStatus()
         guard modelReady else {
             lastError = "Download the on-device Whisper model in Settings or Onboarding first."
             debugLog("intent: model missing")
-            RecordingIntentBridge.settle(reason: "model")
-            return
+            return "model"
         }
 
         if isInPhoneCall {
@@ -219,13 +288,11 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             pendingStartFromIntent = true
             lastError = RecordingError.callInProgress.errorDescription
             debugLog("intent: deferred — call active [\(PhoneCallMonitor.shared.debugDescriptionCalls)]")
-            RecordingIntentBridge.settle(reason: "failed")
-            return
+            return "failed"
         }
 
         beginLongRecordingSession(title: title)
 
-        // Recorder first while AudioRecordingIntent mic grant is open; LA is best-effort after.
         let recorder = IOSAudioRecorder()
         attachRecorderDelegate(recorder)
         audioRecorder = recorder
@@ -241,13 +308,13 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             reloadRecordingControl()
             lastError = nil
             debugLog("intent: recorder started ok")
-            RecordingIntentBridge.settle(reason: "ok")
             haptic(.medium)
             Task { [weak self] in
                 guard let self else { return }
                 let laOK = await self.startLiveActivity(title: title)
                 self.debugLog("intent: Live Activity ok=\(laOK)")
             }
+            return "ok"
         } catch {
             if isInPhoneCall {
                 audioRecorder?.cancelRecording()
@@ -261,8 +328,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 pendingStartFromIntent = true
                 lastError = RecordingError.callInProgress.errorDescription
                 debugLog("intent: call raced in during start")
-                RecordingIntentBridge.settle(reason: "failed")
-                return
+                return "failed"
             }
             audioRecorder?.cancelRecording()
             audioRecorder = nil
@@ -273,22 +339,31 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             let detail = Self.formatError(error)
             debugLog("intent: recorder failed \(detail)")
             lastError = "Couldn't start yet: \(detail). Try again in a moment."
-            RecordingIntentBridge.settle(reason: "failed")
+            return "failed"
         }
     }
 
     func stopLongRecordingFromIntent() async {
-        guard isRecording, isLongRecording else {
-            RecordingIntentBridge.settle(reason: "ok")
-            return
-        }
-        // Keep process alive for transcription after intent returns.
-        var bgTask = UIBackgroundTaskIdentifier.invalid
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "ShravaTranscribe") {
-            if bgTask != .invalid {
-                UIApplication.shared.endBackgroundTask(bgTask)
-                bgTask = .invalid
+        let reason = await stopLongRecordingFromIntentReturningReason()
+        RecordingIntentBridge.settle(reason: reason)
+    }
+
+    @discardableResult
+    func stopLongRecordingFromIntentReturningReason() async -> String {
+        debugLog("STOP path=intent recording=\(isRecording) long=\(isLongRecording) la=\(RecordingIntentBridge.isLiveRecordingActive) dur=\(Int(recordingDuration))s")
+
+        // Process was killed mid-record: LA may still show, but local state is cold.
+        if !(isRecording && isLongRecording) {
+            if RecordingIntentBridge.isLiveRecordingActive {
+                await endAllLiveActivities()
+                reloadRecordingControl()
             }
+            // Recover newest orphan and transcribe if present.
+            if let recovered = await enqueueNewestOrphanIfNeeded(titlePrefix: "Recovered recording") {
+                debugLog("STOP intent: recovered orphan id=\(recovered.uuidString)")
+                return "ok"
+            }
+            return RecordingIntentBridge.isLiveRecordingActive ? "ok" : "notRecording"
         }
 
         pendingStartAfterCall = false
@@ -302,42 +377,22 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         UIApplication.shared.isIdleTimerDisabled = false
 
         let url = await audioRecorder?.stopLongRecording()
-        // End Live Activity BEFORE deactivating session (AudioRecordingIntent contract).
         await endLiveActivity()
         audioRecorder?.deactivateAfterStop()
         audioRecorder = nil
         reloadRecordingControl()
-        RecordingIntentBridge.settle(reason: "ok")
-
-        defer {
-            isProcessing = false
-            isLongRecording = false
-            if bgTask != .invalid {
-                UIApplication.shared.endBackgroundTask(bgTask)
-                bgTask = .invalid
-            }
-        }
+        isLongRecording = false
 
         guard let url else {
             lastError = "No audio file recorded"
-            return
+            isProcessing = false
+            debugLog("STOP intent: no audio url")
+            return "failed"
         }
 
-        do {
-            let result = try await IOSWhisper.shared.transcribeFile(
-                url: url,
-                durationSeconds: duration,
-                language: SettingsManager.shared.settings.language,
-                dictionary: dictionary,
-                progress: { [weak self] p in
-                    self?.transcriptionProgress = p
-                }
-            )
-            await finishTranscription(result)
-        } catch {
-            lastError = "Error: \(Self.formatError(error))"
-            notifyError()
-        }
+        debugLog("STOP intent: file=\(url.lastPathComponent) dur=\(String(format: "%.1f", duration))s — queuing transcription")
+        await beginTranscriptionPipeline(url: url, durationSeconds: duration, recoveredTitle: nil)
+        return "ok"
     }
 
     private func reloadRecordingControl() {
@@ -370,6 +425,8 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 await startRecording()
             case "intent":
                 await startLongRecordingFromIntent()
+            case "stop", "stop-intent":
+                _ = await stopLongRecordingFromIntentReturningReason()
             default:
                 await startLongRecording()
             }
@@ -670,7 +727,6 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     func stopLongRecordingAndTranscribe() async {
         guard isRecording, isLongRecording else {
-            // If stop intent fires when already stopped, ignore.
             if isRecording { await stopRecordingAndTranscribe() }
             return
         }
@@ -690,31 +746,16 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         audioRecorder?.deactivateAfterStop()
         audioRecorder = nil
         reloadRecordingControl()
-
-        defer { isProcessing = false; isLongRecording = false }
+        isLongRecording = false
 
         guard let url else {
             lastError = "No audio file recorded"
+            isProcessing = false
             return
         }
 
-        do {
-            let result = try await IOSWhisper.shared.transcribeFile(
-                url: url,
-                durationSeconds: duration,
-                language: SettingsManager.shared.settings.language,
-                dictionary: dictionary,
-                progress: { [weak self] p in
-                    self?.transcriptionProgress = p
-                }
-            )
-            await finishTranscription(result)
-            // Keep the m4a for now in Documents/Recordings (user may want it); optional cleanup:
-            // try? FileManager.default.removeItem(at: url)
-        } catch {
-            lastError = "Error: \(Self.formatError(error))"
-            notifyError()
-        }
+        debugLog("STOP path=in-app file=\(url.lastPathComponent) dur=\(String(format: "%.1f", duration))s")
+        await beginTranscriptionPipeline(url: url, durationSeconds: duration, recoveredTitle: nil)
     }
 
     func cancelRecording() async {
@@ -804,7 +845,10 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     private func endLiveActivity() async {
-        guard let liveActivity else { return }
+        guard let liveActivity else {
+            await endAllLiveActivities()
+            return
+        }
         let state = RecordingActivityAttributes.ContentState(
             timerStart: Date(),
             isPaused: true,
@@ -812,6 +856,334 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         )
         await liveActivity.end(.init(state: state, staleDate: nil), dismissalPolicy: .immediate)
         self.liveActivity = nil
+        await endAllLiveActivities()
+    }
+
+    private func endAllLiveActivities() async {
+        for activity in Activity<RecordingActivityAttributes>.activities {
+            let state = RecordingActivityAttributes.ContentState(
+                timerStart: Date(),
+                isPaused: true,
+                frozenElapsed: recordingDuration
+            )
+            await activity.end(.init(state: state, staleDate: nil), dismissalPolicy: .immediate)
+        }
+        liveActivity = nil
+    }
+
+    // MARK: - Transcription pipeline (intent + in-app + recovery)
+
+    private static var recordingsDirectory: URL {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("Recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Immediate History row + background Whisper; survives brief suspension via bg task + pending state.
+    func beginTranscriptionPipeline(
+        url: URL,
+        durationSeconds: Double,
+        recoveredTitle: String?
+    ) async {
+        let entryID = UUID()
+        let fileName = url.lastPathComponent
+        let placeholder = recoveredTitle.map { "\($0) — Transcribing… 0%" } ?? "Transcribing… 0%"
+        var pending = HistoryEntry(
+            id: entryID,
+            originalText: placeholder,
+            cleanedText: placeholder,
+            language: SettingsManager.shared.settings.language.rawValue,
+            durationSeconds: max(durationSeconds, 0.1),
+            transcriptionState: .pending,
+            audioFileName: fileName,
+            transcriptionProgress: 0
+        )
+        await historyManager.add(pending)
+        pendingOpenHistoryID = entryID
+        historyEpoch += 1
+        showingResult = false
+        isProcessing = true
+        transcriptionProgress = 0
+        debugLog("TRANSCRIBE begin id=\(entryID.uuidString) file=\(fileName) dur=\(String(format: "%.1f", durationSeconds))")
+
+        beginTranscribeBackgroundWork(title: "Transcribing", subtitle: formatDurationLabel(durationSeconds))
+
+        do {
+            let result = try await IOSWhisper.shared.transcribeFile(
+                url: url,
+                durationSeconds: durationSeconds,
+                language: SettingsManager.shared.settings.language,
+                dictionary: dictionary,
+                progress: { [weak self] p in
+                    guard let self else { return }
+                    self.transcriptionProgress = p
+                    Task { @MainActor in
+                        await self.updatePendingProgress(id: entryID, progress: p, fileName: fileName, duration: durationSeconds, recoveredTitle: recoveredTitle)
+                        self.updateContinuedProgress(p)
+                    }
+                }
+            )
+            await finishTranscription(result, replacing: entryID, audioFileName: fileName)
+            debugLog("TRANSCRIBE ok id=\(entryID.uuidString) chars=\(result.cleanedText.count)")
+        } catch {
+            let msg = Self.formatError(error)
+            debugLog("TRANSCRIBE fail id=\(entryID.uuidString) \(msg)")
+            pending.transcriptionState = .failed
+            pending.transcriptionProgress = transcriptionProgress
+            pending.cleanedText = "Transcription failed — tap to retry"
+            pending.originalText = msg
+            await historyManager.update(pending)
+            historyEpoch += 1
+            lastError = "Error: \(msg)"
+            notifyError()
+        }
+
+        isProcessing = false
+        endTranscribeBackgroundWork(success: true)
+    }
+
+    private func updatePendingProgress(
+        id: UUID,
+        progress: Double,
+        fileName: String,
+        duration: Double,
+        recoveredTitle: String?
+    ) async {
+        let pct = Int((progress * 100).rounded())
+        let label = recoveredTitle.map { "\($0) — Transcribing… \(pct)%" } ?? "Transcribing… \(pct)%"
+        let entry = HistoryEntry(
+            id: id,
+            originalText: label,
+            cleanedText: label,
+            language: SettingsManager.shared.settings.language.rawValue,
+            durationSeconds: duration,
+            transcriptionState: .pending,
+            audioFileName: fileName,
+            transcriptionProgress: progress
+        )
+        await historyManager.update(entry)
+        // Throttle UI churn: update epoch every ~10%.
+        if pct % 10 == 0 {
+            historyEpoch += 1
+        }
+    }
+
+    private func finishTranscription(
+        _ result: TranscriptionResult,
+        replacing id: UUID? = nil,
+        audioFileName: String? = nil
+    ) async {
+        var cleaned = result.cleanedText
+        var original = result.originalText
+        if !transcriptGapMarkers.isEmpty {
+            let gaps = transcriptGapMarkers.joined(separator: "\n")
+            cleaned = cleaned.isEmpty ? gaps : gaps + "\n\n" + cleaned
+            original = original.isEmpty ? gaps : gaps + "\n\n" + original
+            transcriptGapMarkers = []
+        }
+        lastTranscription = cleaned
+        showingResult = true
+
+        let entry = HistoryEntry(
+            id: id ?? UUID(),
+            originalText: original,
+            cleanedText: cleaned,
+            language: result.language.rawValue,
+            durationSeconds: result.durationSeconds,
+            transcriptionState: .complete,
+            audioFileName: audioFileName,
+            transcriptionProgress: 1
+        )
+        if id != nil {
+            await historyManager.update(entry)
+        } else {
+            await historyManager.add(entry)
+        }
+        pendingOpenHistoryID = entry.id
+        historyEpoch += 1
+
+        if SettingsManager.shared.settings.iCloudSyncEnabled {
+            let allHistory = await historyManager.getAll()
+            CloudSyncManager.shared.syncHistory(allHistory)
+        }
+
+        if launchedFromKeyboard {
+            writeTranscriptionToAppGroup(result.cleanedText)
+        }
+
+        if SettingsManager.shared.settings.hapticFeedback {
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    func retryTranscription(for entry: HistoryEntry) async {
+        guard entry.transcriptionState == .failed || entry.transcriptionState == .pending,
+              let name = entry.audioFileName else { return }
+        let url = Self.recordingsDirectory.appendingPathComponent(name)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            lastError = "Audio file missing"
+            return
+        }
+        var updating = entry
+        updating.transcriptionState = .pending
+        updating.transcriptionProgress = 0
+        updating.cleanedText = "Transcribing… 0%"
+        await historyManager.update(updating)
+        historyEpoch += 1
+        currentTab = .history
+        isProcessing = true
+        beginTranscribeBackgroundWork(title: "Retrying transcription", subtitle: formatDurationLabel(entry.durationSeconds))
+        do {
+            let result = try await IOSWhisper.shared.transcribeFile(
+                url: url,
+                durationSeconds: entry.durationSeconds,
+                language: SettingsManager.shared.settings.language,
+                dictionary: dictionary,
+                progress: { [weak self] p in
+                    self?.transcriptionProgress = p
+                    Task { @MainActor in
+                        await self?.updatePendingProgress(
+                            id: entry.id,
+                            progress: p,
+                            fileName: name,
+                            duration: entry.durationSeconds,
+                            recoveredTitle: nil
+                        )
+                        self?.updateContinuedProgress(p)
+                    }
+                }
+            )
+            await finishTranscription(result, replacing: entry.id, audioFileName: name)
+        } catch {
+            var failed = entry
+            failed.transcriptionState = .failed
+            failed.cleanedText = "Transcription failed — tap to retry"
+            failed.originalText = Self.formatError(error)
+            await historyManager.update(failed)
+            historyEpoch += 1
+            lastError = "Error: \(Self.formatError(error))"
+            notifyError()
+        }
+        isProcessing = false
+        endTranscribeBackgroundWork(success: true)
+    }
+
+    /// Import orphaned m4a files that never made it into History.
+    func recoverOrphanedRecordings() async {
+        let dir = Self.recordingsDirectory
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey], options: [.skipsHiddenFiles]) else { return }
+        let existing = await historyManager.getAll()
+        let known = Set(existing.compactMap(\.audioFileName))
+        let m4as = files.filter { $0.pathExtension.lowercased() == "m4a" && !known.contains($0.lastPathComponent) }
+        for url in m4as.sorted(by: { a, b in
+            let da = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let db = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return da > db
+        }) {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard size > 8_000 else { continue } // skip tiny/corrupt stubs
+            let duration = await audioDuration(url: url) ?? max(1, Double(size) / 7000.0)
+            let entry = HistoryEntry(
+                originalText: "Recovered recording",
+                cleanedText: "Recovered recording — tap to transcribe",
+                language: SettingsManager.shared.settings.language.rawValue,
+                durationSeconds: duration,
+                transcriptionState: .failed,
+                audioFileName: url.lastPathComponent,
+                transcriptionProgress: 0
+            )
+            await historyManager.add(entry)
+            debugLog("RECOVER orphan \(url.lastPathComponent) dur=\(String(format: "%.1f", duration))s size=\(size)")
+            historyEpoch += 1
+        }
+    }
+
+    /// Resume any History rows still marked pending (app killed mid-Whisper).
+    func resumePendingTranscriptions() async {
+        let all = await historyManager.getAll()
+        for entry in all where entry.transcriptionState == .pending {
+            debugLog("RESUME pending \(entry.id.uuidString)")
+            await retryTranscription(for: entry)
+        }
+    }
+
+    @discardableResult
+    private func enqueueNewestOrphanIfNeeded(titlePrefix: String) async -> UUID? {
+        await recoverOrphanedRecordings()
+        let all = await historyManager.getAll()
+        guard let entry = all.first(where: { $0.transcriptionState == .failed && $0.audioFileName != nil }) else { return nil }
+        await retryTranscription(for: entry)
+        return entry.id
+    }
+
+    private func audioDuration(url: URL) async -> Double? {
+        let asset = AVURLAsset(url: url)
+        do {
+            let duration = try await asset.load(.duration)
+            let secs = CMTimeGetSeconds(duration)
+            return secs.isFinite && secs > 0 ? secs : nil
+        } catch {
+            return nil
+        }
+    }
+
+    private func formatDurationLabel(_ t: TimeInterval) -> String {
+        let e = max(0, Int(t))
+        return String(format: "%d:%02d", e / 60, e % 60)
+    }
+
+    private func beginTranscribeBackgroundWork(title: String, subtitle: String) {
+        if transcribeBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(transcribeBgTask)
+            transcribeBgTask = .invalid
+        }
+        transcribeBgTask = UIApplication.shared.beginBackgroundTask(withName: "ShravaTranscribe") { [weak self] in
+            guard let self else { return }
+            if self.transcribeBgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(self.transcribeBgTask)
+                self.transcribeBgTask = .invalid
+            }
+            self.debugLog("TRANSCRIBE bgTask expired")
+        }
+
+        // Identifier must stay under the Info.plist permitted prefix.
+        let request = BGContinuedProcessingTaskRequest(
+            identifier: Self.continuedProcessingTaskID,
+            title: title,
+            subtitle: subtitle
+        )
+        request.strategy = .queue
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            debugLog("TRANSCRIBE submitted BGContinuedProcessingTask")
+        } catch {
+            debugLog("TRANSCRIBE BGContinuedProcessingTask submit failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func updateContinuedProgress(_ fraction: Double) {
+        // Progress is also mirrored on History; BGContinuedProcessingTask progress
+        // is updated inside the registered launch handler when the system attaches.
+        _ = fraction
+    }
+
+    private func endTranscribeBackgroundWork(success: Bool) {
+        if transcribeBgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(transcribeBgTask)
+            transcribeBgTask = .invalid
+        }
+        _ = success
+    }
+
+    func openRecordTabForLiveActivity() {
+        currentTab = .record
+    }
+
+    func openHistoryItem(_ id: UUID) {
+        pendingOpenHistoryID = id
+        currentTab = .history
     }
 
     // MARK: - Helpers
@@ -832,40 +1204,6 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return false
         }
         return true
-    }
-
-    private func finishTranscription(_ result: TranscriptionResult) async {
-        var cleaned = result.cleanedText
-        var original = result.originalText
-        if !transcriptGapMarkers.isEmpty {
-            let gaps = transcriptGapMarkers.joined(separator: "\n")
-            cleaned = cleaned.isEmpty ? gaps : gaps + "\n\n" + cleaned
-            original = original.isEmpty ? gaps : gaps + "\n\n" + original
-            transcriptGapMarkers = []
-        }
-        lastTranscription = cleaned
-        showingResult = true
-
-        let entry = HistoryEntry(
-            originalText: original,
-            cleanedText: cleaned,
-            language: result.language.rawValue,
-            durationSeconds: result.durationSeconds
-        )
-        await historyManager.add(entry)
-
-        if SettingsManager.shared.settings.iCloudSyncEnabled {
-            let allHistory = await historyManager.getAll()
-            CloudSyncManager.shared.syncHistory(allHistory)
-        }
-
-        if launchedFromKeyboard {
-            writeTranscriptionToAppGroup(result.cleanedText)
-        }
-
-        if SettingsManager.shared.settings.hapticFeedback {
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-        }
     }
 
     private func writeTranscriptionToAppGroup(_ text: String) {

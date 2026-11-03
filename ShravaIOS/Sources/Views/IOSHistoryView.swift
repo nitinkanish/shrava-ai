@@ -74,6 +74,14 @@ struct IOSHistoryView: View {
         .onChange(of: appState.showingResult) { _, _ in
             Task { await loadEntries() }
         }
+        .onChange(of: appState.historyEpoch) { _, _ in
+            Task { await loadEntries() }
+        }
+        .onChange(of: appState.transcriptionProgress) { _, _ in
+            if appState.isProcessing {
+                Task { await loadEntries() }
+            }
+        }
     }
 
     private var emptyState: some View {
@@ -115,18 +123,25 @@ struct IOSHistoryView: View {
 
 struct IOSHistoryRow: View {
     let entry: HistoryEntry
+    @EnvironmentObject var appState: IOSAppState
     @State private var hasBrief = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top) {
-                Text(ShravaTheme.title(from: entry.cleanedText))
+                Text(rowTitle)
                     .font(.headline)
                     .foregroundStyle(.primary)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
                 Spacer(minLength: 8)
-                if hasBrief {
+                if entry.transcriptionState == .pending {
+                    ProgressView(value: liveProgress)
+                        .frame(width: 36)
+                } else if entry.transcriptionState == .failed {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(ShravaTheme.coral)
+                } else if hasBrief {
                     Label("Brief", systemImage: "sparkles")
                         .font(.caption2.weight(.bold))
                         .padding(.horizontal, 8)
@@ -134,7 +149,7 @@ struct IOSHistoryRow: View {
                         .shravaGlass(.regular.tint(ShravaTheme.magenta.opacity(0.35)), in: Capsule())
                 }
             }
-            Text(entry.cleanedText)
+            Text(rowSubtitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -155,10 +170,45 @@ struct IOSHistoryRow: View {
         .shravaGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .task { hasBrief = await BriefStore.shared.brief(for: entry.id) != nil }
     }
+
+    private var liveProgress: Double {
+        if entry.transcriptionState == .pending, appState.isProcessing,
+           appState.pendingOpenHistoryID == entry.id {
+            return max(entry.transcriptionProgress, appState.transcriptionProgress)
+        }
+        return entry.transcriptionProgress
+    }
+
+    private var rowTitle: String {
+        switch entry.transcriptionState {
+        case .pending:
+            let pct = Int((liveProgress * 100).rounded())
+            return "Transcribing… \(pct)%"
+        case .failed:
+            if entry.cleanedText.lowercased().contains("recovered") {
+                return "Recovered recording"
+            }
+            return "Transcription failed"
+        case .complete:
+            return ShravaTheme.title(from: entry.cleanedText)
+        }
+    }
+
+    private var rowSubtitle: String {
+        switch entry.transcriptionState {
+        case .pending:
+            return String(format: "%.0fs · on-device Whisper", entry.durationSeconds)
+        case .failed:
+            return "Tap to open, then Retry"
+        case .complete:
+            return entry.cleanedText
+        }
+    }
 }
 
 struct IOSHistoryDetailView: View {
     let entry: HistoryEntry
+    @EnvironmentObject var appState: IOSAppState
     @State private var brief: MeetingBrief?
     @State private var analyzing = false
     @State private var errorText: String?
@@ -203,6 +253,21 @@ struct IOSHistoryDetailView: View {
                             .padding(.horizontal, 4)
                     }
 
+                    if entry.transcriptionState == .failed || entry.transcriptionState == .pending {
+                        Button {
+                            Task { await appState.retryTranscription(for: entry) }
+                        } label: {
+                            HStack {
+                                Image(systemName: "arrow.clockwise")
+                                Text(entry.transcriptionState == .pending ? "Transcribing…" : "Retry transcription")
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(ShravaTheme.coral)
+                        .disabled(appState.isProcessing)
+                    }
+
                     Button {
                         Task { await analyze(force: brief != nil) }
                     } label: {
@@ -215,7 +280,7 @@ struct IOSHistoryDetailView: View {
                     }
                     .buttonStyle(.glassProminent)
                     .tint(ShravaTheme.purple)
-                    .disabled(analyzing || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(analyzing || entry.transcriptionState != .complete || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                     if brief != nil {
                         Button("View Meeting Brief") { showBrief = true }

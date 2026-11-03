@@ -10,6 +10,8 @@ enum RecordingIntentAction: String {
     case start
     case stop
     case toggle
+    case pause
+    case resume
 }
 
 enum ShravaControlKind {
@@ -24,13 +26,23 @@ extension Notification.Name {
     static let shravaRecordingIntentSettled = Notification.Name("com.shrava.recordingIntentSettled")
 }
 
+/// App process registers a direct handler so LiveActivityIntent does not depend on
+/// NotificationCenter race with observer registration.
+enum RecordingIntentExecutor {
+    /// Returns settle reason ("ok", "permission", …). Set from IOSAppState.init.
+    static var handle: (@MainActor (RecordingIntentAction) async -> String)?
+}
+
 /// Waits inside `perform()` so AudioRecordingIntent’s mic grant stays open until recording actually starts.
 enum RecordingIntentBridge {
-    static let timeout: TimeInterval = 10
+    static let timeout: TimeInterval = 15
 
     @discardableResult
     static func dispatchAndWait(action: RecordingIntentAction) async -> String {
-        await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
+        if let handle = RecordingIntentExecutor.handle {
+            return await handle(action)
+        }
+        return await withCheckedContinuation { (cont: CheckedContinuation<String, Never>) in
             let lock = NSLock()
             var finished = false
             var token: NSObjectProtocol?
@@ -136,22 +148,93 @@ public struct StopRecordingIntent: AppIntent, AudioRecordingIntent, LiveActivity
     public init() {}
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
-        guard RecordingIntentBridge.isLiveRecordingActive else {
-            return .result(dialog: "Not recording")
-        }
+        // Even if ActivityKit shows nothing, still ask the app to stop / recover orphans.
         let reason = await RecordingIntentBridge.dispatchAndWait(action: .stop)
         if reason == "ok" {
             return .result(dialog: "Recording stopped — transcribing")
         }
+        if reason == "notRecording" {
+            return .result(dialog: "Not recording")
+        }
         return .result(dialog: "Couldn’t stop recording")
+    }
+}
+
+/// Pause the current long recording (Live Activity / Shortcuts).
+@available(iOS 18.0, *)
+public struct PauseRecordingIntent: AppIntent, LiveActivityIntent {
+    public static var title: LocalizedStringResource = "Pause Shrava Recording"
+    public static var description = IntentDescription("Pause the current Shrava meeting recording.")
+
+    public static var openAppWhenRun: Bool { false }
+    public static var supportedModes: IntentModes { .background }
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let reason = await RecordingIntentBridge.dispatchAndWait(action: .pause)
+        return .result(dialog: reason == "ok" ? "Paused" : "Couldn’t pause")
+    }
+}
+
+/// Resume a paused long recording (Live Activity / Shortcuts).
+@available(iOS 18.0, *)
+public struct ResumeRecordingIntent: AppIntent, AudioRecordingIntent, LiveActivityIntent {
+    public static var title: LocalizedStringResource = "Resume Shrava Recording"
+    public static var description = IntentDescription("Resume a paused Shrava meeting recording.")
+
+    public static var openAppWhenRun: Bool { false }
+    public static var supportedModes: IntentModes { .background }
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let reason = await RecordingIntentBridge.dispatchAndWait(action: .resume)
+        return .result(dialog: reason == "ok" ? "Resumed" : "Couldn’t resume")
+    }
+}
+
+/// Flip recording on/off — recommended Action Button / Siri shortcut.
+@available(iOS 18.0, *)
+public struct FlipRecordingIntent: AppIntent, AudioRecordingIntent, LiveActivityIntent {
+    public static var title: LocalizedStringResource = "Toggle Shrava Recording"
+    public static var description = IntentDescription("Start recording if idle, or stop and transcribe if already recording. Best for Action Button.")
+
+    public static var openAppWhenRun: Bool { false }
+    public static var supportedModes: IntentModes { .background }
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let reason = await RecordingIntentBridge.dispatchAndWait(action: .toggle)
+        switch reason {
+        case "ok", "started":
+            return .result(dialog: "Recording started")
+        case "stopped":
+            return .result(dialog: "Recording stopped — transcribing")
+        case "permission":
+            try await continueInForeground(
+                IntentDialog("Open Shrava to allow microphone access"),
+                alwaysConfirm: false
+            )
+            return .result(dialog: "Open Shrava to allow the microphone")
+        case "model":
+            try await continueInForeground(
+                IntentDialog("Download the Whisper model in Shrava Settings"),
+                alwaysConfirm: false
+            )
+            return .result(dialog: "Download the Whisper model first")
+        default:
+            return .result(dialog: "Couldn’t toggle recording")
+        }
     }
 }
 
 /// Toggle recording (Control Center). `value == true` starts, `false` stops.
 @available(iOS 18.0, *)
 public struct ToggleRecordingIntent: SetValueIntent, AudioRecordingIntent, LiveActivityIntent {
-    public static var title: LocalizedStringResource = "Toggle Shrava Recording"
-    public static var description = IntentDescription("Start or stop Shrava long recording from Control Center or Shortcuts.")
+    public static var title: LocalizedStringResource = "Set Shrava Recording"
+    public static var description = IntentDescription("Start or stop Shrava long recording from Control Center.")
 
     public static var openAppWhenRun: Bool { false }
     public static var supportedModes: IntentModes { .background }
@@ -159,7 +242,9 @@ public struct ToggleRecordingIntent: SetValueIntent, AudioRecordingIntent, LiveA
     @Parameter(title: "Recording")
     public var value: Bool
 
-    public init() {}
+    public init() {
+        self.value = false
+    }
     public init(value: Bool) {
         self.value = value
     }
@@ -169,13 +254,12 @@ public struct ToggleRecordingIntent: SetValueIntent, AudioRecordingIntent, LiveA
         if value, RecordingIntentBridge.isLiveRecordingActive {
             return .result(dialog: "Already recording")
         }
-        if !value, !RecordingIntentBridge.isLiveRecordingActive {
-            return .result(dialog: "Not recording")
-        }
         let reason = await RecordingIntentBridge.dispatchAndWait(action: action)
         switch reason {
         case "ok":
             return .result(dialog: value ? "Recording started" : "Recording stopped")
+        case "notRecording":
+            return .result(dialog: "Not recording")
         case "permission":
             try await continueInForeground(
                 IntentDialog("Open Shrava to allow microphone access"),
