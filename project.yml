@@ -1,0 +1,206 @@
+name: Murmur
+options:
+  bundleIdPrefix: com.murmurapp
+  deploymentTarget:
+    macOS: "14.0"
+    iOS: "18.0"
+  xcodeVersion: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_HARDENED_RUNTIME: YES
+
+packages:
+  MurmurCore:
+    path: ./MurmurCore
+
+targets:
+  MurmurMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: MurmurMac/Sources
+      - path: Shared
+      - path: MurmurMac/Resources/Assets.xcassets
+    dependencies:
+      - package: MurmurCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.mac
+        INFOPLIST_FILE: MurmurMac/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MurmurMac/Resources/MurmurMac.entitlements
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        COMBINE_HIDPI_IMAGES: YES
+    info:
+      path: MurmurMac/Resources/Info.plist
+      properties:
+        CFBundleName: Shrava
+        CFBundleDisplayName: Shrava
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: APPL
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
+        NSAppleEventsUsageDescription: "Shrava needs accessibility access to insert text into other applications."
+    entitlements:
+      path: MurmurMac/Resources/MurmurMac.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.device.audio-input: true
+        com.apple.security.automation.apple-events: true
+        com.apple.security.temporary-exception.apple-events:
+          - com.apple.systemevents
+        com.apple.security.personal-information.addressbook: false
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.murmurapp
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.murmurapp
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.murmurapp
+
+  MurmurIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MurmurIOS/Sources
+      - path: Shared
+    resources:
+      - path: MurmurIOS/Resources
+    dependencies:
+      - package: MurmurCore
+      - target: MurmurKeyboard
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.ios
+        INFOPLIST_FILE: MurmurIOS/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MurmurIOS/Resources/MurmurIOS.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    info:
+      path: MurmurIOS/Resources/Info.plist
+      properties:
+        CFBundleName: Shrava
+        CFBundleDisplayName: Shrava
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: APPL
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities:
+          - armv7
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
+        CFBundleURLTypes:
+          - CFBundleURLName: com.murmurapp.ios
+            CFBundleURLSchemes:
+              - murmur
+    entitlements:
+      path: MurmurIOS/Resources/MurmurIOS.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.murmurapp
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.murmurapp
+        com.apple.developer.icloud-container-identifiers:
+          - iCloud.com.murmurapp
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.murmurapp
+
+  MurmurKeyboard:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: MurmurKeyboard/Sources
+      - path: Shared
+    resources:
+      - path: MurmurKeyboard/Resources
+    dependencies:
+      - package: MurmurCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.ios.keyboard
+        INFOPLIST_FILE: MurmurKeyboard/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MurmurKeyboard/Resources/MurmurKeyboard.entitlements
+        SKIP_INSTALL: NO
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+    info:
+      path: MurmurKeyboard/Resources/Info.plist
+      properties:
+        CFBundleName: Shrava Keyboard
+        CFBundleDisplayName: Shrava Keyboard
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: XPC!
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).KeyboardViewController
+          NSExtensionAttributes:
+            IsASCIICapable: true
+            PrefersRightToLeft: false
+            PrimaryLanguage: en-US
+            RequestsOpenAccess: true
+    entitlements:
+      path: MurmurKeyboard/Resources/MurmurKeyboard.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.murmurapp
+        keychain-access-groups:
+          - $(AppIdentifierPrefix)com.murmurapp
+
+schemes:
+  MurmurMac:
+    build:
+      targets:
+        MurmurMac: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
+
+  MurmurIOS:
+    build:
+      targets:
+        MurmurIOS: all
+        MurmurKeyboard: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release
