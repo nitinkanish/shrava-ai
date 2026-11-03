@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import ShravaCore
 
 struct IOSHistoryView: View {
@@ -194,13 +195,38 @@ struct IOSHistoryDetailView: View {
                         Button("Done") { showBrief = false }
                     }
                     if let brief {
-                        ToolbarItem(placement: .primaryAction) {
-                            ShareLink(item: brief.asMarkdown())
+                        ToolbarItemGroup(placement: .primaryAction) {
+                            Button {
+                                UIPasteboard.general.string = brief.asMarkdown()
+                            } label: {
+                                Label("Copy", systemImage: "doc.on.doc")
+                            }
+                            ShareLink(
+                                item: BriefMarkdownFile(
+                                    markdown: brief.asMarkdown(),
+                                    filename: markdownFilename
+                                ),
+                                preview: SharePreview("Meeting Brief", image: Image(systemName: "doc.richtext"))
+                            ) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                            Button {
+                                showBrief = false
+                                Task { await analyze(force: true) }
+                            } label: {
+                                Label("Re-analyze", systemImage: "arrow.clockwise")
+                            }
+                            .disabled(analyzing)
                         }
                     }
                 }
             }
         }
+    }
+
+    private var markdownFilename: String {
+        let day = entry.timestamp.formatted(.iso8601.year().month().day())
+        return "Meeting-Brief-\(day).md"
     }
 
     private func analyze(force: Bool) async {
@@ -273,6 +299,21 @@ struct IOSMeetingBriefView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+
+/// Temporary .md file for ShareLink export.
+private struct BriefMarkdownFile: Transferable {
+    let markdown: String
+    let filename: String
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(exportedContentType: .plainText) { value in
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(value.filename)
+            try value.markdown.write(to: url, atomically: true, encoding: .utf8)
+            return SentTransferredFile(url)
         }
     }
 }
