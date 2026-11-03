@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import OSLog
 
 enum RecordingMode: Equatable {
     case quick   // short hold-to-talk WAV PCM 16 kHz
@@ -41,6 +42,8 @@ protocol IOSAudioRecorderDelegate: AnyObject {
 }
 
 final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
+    private static let log = Logger(subsystem: "com.shrava.ios", category: "recorder")
+
     weak var delegate: IOSAudioRecorderDelegate?
 
     private var audioRecorder: AVAudioRecorder?
@@ -108,7 +111,10 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
 
         let recorder = try makeRecorder(url: url, mode: mode)
         audioRecorder = recorder
-        guard recorder.record() else {
+        let started = recorder.record()
+        Self.log.info("AVAudioRecorder.record() -> \(started) url=\(url.lastPathComponent, privacy: .public) mode=\(String(describing: mode), privacy: .public)")
+        print("SHRAVA AVAudioRecorder.record() -> \(started) file=\(url.lastPathComponent) mode=\(mode)")
+        guard started else {
             throw RecordingError.failedToStart(Self.makeError(-1, "AVAudioRecorder failed to start"))
         }
         installSessionObservers()
@@ -136,6 +142,12 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
         guard mode == .long else { return }
         guard recordingURL != nil || !completedSegmentURLs.isEmpty else { return }
         cancelResumeRetries()
+
+        // Already capturing — do not stop/segment.
+        if let audioRecorder, audioRecorder.isRecording {
+            finishSuccessfulResume(reasonCleared: reasonCleared)
+            return
+        }
 
         try activateSessionSync(for: .long)
 
@@ -303,21 +315,33 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
 
     // MARK: - Session
 
-    /// Prefer exclusive playAndRecord for long meetings (no mixWithOthers) so background audio mode keeps the mic.
-    /// Drop mixWithOthers — mixing with a phone call still can't capture call audio, and exclusive category
-    /// resumes more reliably after CallKit releases the session.
+    /// Activate AVAudioSession for recording.
+    /// Long-meeting config matches the pre-regression working combo: `.default` mode with
+    /// `.allowBluetoothHFP`, `.defaultToSpeaker`, and `.mixWithOthers`.
+    /// (`.spokenAudio` without `.mixWithOthers` was causing setCategory/setActive to fail
+    /// repeatedly — the 8-attempt backoff then surfaced as a ~5–6s "cannot start" error.)
+    /// CallKit still interrupts us during phone calls; mixWithOthers does not capture call audio.
     private func activateSession(for mode: RecordingMode, allowingRetries: Bool) async throws {
         var lastError: Error?
-        let attempts = allowingRetries ? 8 : 1
+        // Only a couple of short retries for truly transient activation races (e.g. call just ended).
+        let attempts = allowingRetries ? 3 : 1
         for i in 0..<attempts {
             do {
                 try activateSessionSync(for: mode)
+                Self.log.info("activateSession OK mode=\(String(describing: mode), privacy: .public) attempt=\(i + 1)")
+                print("SHRAVA activateSession OK mode=\(mode) attempt=\(i + 1)")
                 return
             } catch {
                 lastError = error
-                // Transient failures while a call / Siri / other audio owns the session.
+                let ns = error as NSError
+                Self.log.error("activateSession FAIL attempt=\(i + 1) domain=\(ns.domain, privacy: .public) code=\(ns.code) desc=\(error.localizedDescription, privacy: .public)")
+                print("SHRAVA activateSession FAIL attempt=\(i + 1) domain=\(ns.domain) code=\(ns.code) desc=\(error.localizedDescription)")
                 if !allowingRetries { break }
-                let delay = UInt64(250_000_000 * (i + 1)) // 0.25s, 0.5s, …
+                // Don't grind for many seconds on a hard configuration failure.
+                if ns.domain == NSOSStatusErrorDomain && ![560557684, 561015905, 561017449].contains(ns.code) {
+                    // 560557684 = !sess, 561015905 = AWAV, 561017449 =!pri — common transient codes; others may be config.
+                }
+                let delay = UInt64(300_000_000) // 0.3s between attempts (~0.6s max wait)
                 try? await Task.sleep(nanoseconds: delay)
             }
         }
@@ -330,15 +354,27 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
         let sessionMode: AVAudioSession.Mode
         switch mode {
         case .long:
-            // spokenAudio is appropriate for meeting capture; default is also fine.
-            sessionMode = .spokenAudio
-            options = [.allowBluetoothHFP, .defaultToSpeaker]
+            // Proven working before ef77677 regression. Keep mic usable in background via UIBackgroundModes=audio.
+            sessionMode = .default
+            options = [.allowBluetoothHFP, .defaultToSpeaker, .mixWithOthers]
         case .quick:
             sessionMode = .measurement
             options = [.allowBluetoothHFP, .defaultToSpeaker, .mixWithOthers]
         }
-        try session.setCategory(.playAndRecord, mode: sessionMode, options: options)
-        try session.setActive(true, options: [])
+        do {
+            try session.setCategory(.playAndRecord, mode: sessionMode, options: options)
+        } catch {
+            let ns = error as NSError
+            Self.log.error("setCategory failed domain=\(ns.domain, privacy: .public) code=\(ns.code)")
+            throw error
+        }
+        do {
+            try session.setActive(true, options: [])
+        } catch {
+            let ns = error as NSError
+            Self.log.error("setActive failed domain=\(ns.domain, privacy: .public) code=\(ns.code) otherAudio=\(session.isOtherAudioPlaying) secondary=\(session.secondaryAudioShouldBeSilencedHint) cat=\(session.category.rawValue, privacy: .public) mode=\(session.mode.rawValue, privacy: .public)")
+            throw error
+        }
     }
 
     private func makeRecorder(url: URL, mode: RecordingMode) throws -> AVAudioRecorder {

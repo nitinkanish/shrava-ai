@@ -3,11 +3,13 @@ import AVFoundation
 import ActivityKit
 import WidgetKit
 import CallKit
+import OSLog
 import ShravaCore
 
 @MainActor
 final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     static let shared = IOSAppState()
+    private static let log = Logger(subsystem: "com.shrava.ios", category: "appstate")
 
     @Published var isRecording = false
     @Published var isLongRecording = false
@@ -74,8 +76,8 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(
                 .playAndRecord,
-                mode: .spokenAudio,
-                options: [.allowBluetoothHFP, .defaultToSpeaker]
+                mode: .default,
+                options: [.allowBluetoothHFP, .defaultToSpeaker, .mixWithOthers]
             )
         } catch {
             print("Failed to setup audio session: \(error)")
@@ -133,11 +135,16 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     private func retryResumeAfterLifecycle() {
-        guard isRecording, isLongRecording else { return }
+        guard isRecording, isLongRecording, audioRecorder != nil else { return }
         if PhoneCallMonitor.shared.hasActiveCall { return }
-        if isPaused || audioRecorder?.isRecording == false {
-            audioRecorder?.resumeWithRetry(trigger: "lifecycle")
-        }
+        // Only when we know we're paused/interrupted — avoid racing a cold start
+        // (which previously could call resume → startNewSegmentContinuing and break recording).
+        let recorderPaused = audioRecorder?.isPausedRecording == true
+            || audioRecorder?.currentPauseReason != nil
+        guard isPaused || recorderPaused else { return }
+        Self.log.info("lifecycle resume attempt isPaused=\(self.isPaused) reason=\(String(describing: self.audioRecorder?.currentPauseReason), privacy: .public)")
+        print("SHRAVA lifecycle resume attempt isPaused=\(isPaused)")
+        audioRecorder?.resumeWithRetry(trigger: "lifecycle")
     }
 
     private func observeStopIntent() {
@@ -200,6 +207,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return
         }
 
+        Self.log.info("startLongRecordingFromIntent callActive=\(self.isInPhoneCall) modelReady=\(self.modelReady)")
         if isInPhoneCall {
             pendingStartAfterCall = true
             pendingStartTitle = title
@@ -258,6 +266,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             isRecording = false
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
+            Self.log.error("startLongRecordingFromIntent failed: \(error.localizedDescription, privacy: .public)")
             lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
             RecordingIntentBridge.settle(reason: "failed")
         }
@@ -466,6 +475,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         guard !isRecording else { return }
         guard await prepareToRecord() else { return }
 
+        Self.log.info("startLongRecording callActive=\(self.isInPhoneCall) modelReady=\(self.modelReady)")
         if isInPhoneCall {
             pendingStartAfterCall = true
             pendingStartTitle = title
@@ -513,6 +523,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             UIApplication.shared.isIdleTimerDisabled = false
             await endLiveActivity()
             // Soft message — activation often fails transiently right after a call.
+            Self.log.error("startLongRecording failed: \(error.localizedDescription, privacy: .public)")
             lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
         }
     }
