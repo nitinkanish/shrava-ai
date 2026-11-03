@@ -3,6 +3,7 @@ import ShravaCore
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
     
     var body: some View {
         VStack(spacing: 0) {
@@ -97,7 +98,12 @@ struct MenuBarView: View {
     private var actionSection: some View {
         VStack(spacing: 4) {
             Button(action: {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NSApp.windows.first { $0.identifier?.rawValue.contains("Settings") == true || $0.title.contains("Settings") }?.makeKeyAndOrderFront(nil)
+                }
             }) {
                 HStack {
                     Image(systemName: "gear")
