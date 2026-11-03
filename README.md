@@ -24,6 +24,11 @@ Audio never leaves your device for transcription. Meeting Brief text is sent to 
 
 Menu-bar app: hold your hotkey, speak, release — polished text is typed into the focused field.
 
+
+| Welcome | Hotkey settings |
+|:---:|:---:|
+| <img src="docs/screenshots/mac-welcome.png" width="420" alt="Mac welcome"> | <img src="docs/screenshots/mac-hotkey.png" width="420" alt="Mac hotkey settings"> |
+
 ### Features
 
 - **Hold Fn dictation** (or Control+Option / custom hotkey) with a floating, **draggable** recording indicator and custom Shrava menu-bar logo
