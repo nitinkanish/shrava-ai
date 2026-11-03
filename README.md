@@ -1,285 +1,172 @@
 # Shrava
 
-A clean-room AI voice dictation app for macOS 14+ and iOS 18+. Speak naturally and get clean, polished text with AI-powered transcription and cleanup.
+**Every Conversation, Captured.**
 
-## Features
+Local-first voice dictation and meeting capture for **macOS** and **iPhone**. Hold a key (or tap Record), speak naturally, and get clean on-device transcripts — with optional Meeting Brief insights when you ask for them.
 
-- **AI-Powered Transcription**: Uses OpenAI's gpt-4o-transcribe (with whisper-1 fallback) for accurate speech-to-text
-- **Intelligent Cleanup**: Removes filler words, applies spoken self-corrections, adds punctuation, and formats lists/paragraphs
-- **Personal Dictionary**: Custom word replacements for names, technical terms, and corrections
-- **Dictation History**: Searchable history of all your transcriptions
-- **Cross-Platform Sync**: iCloud sync for dictionary and history across Mac and iOS
-- **macOS Menu Bar App**: Hold-to-talk with global hotkey (Fn or Ctrl+Option)
-- **iOS Keyboard Extension**: Dictate directly from any app
+## Highlights
 
-## Requirements
+| Desktop (macOS 14+) | Mobile (iOS 18+) |
+| --- | --- |
+| Hold **Fn** to dictate into any app | Liquid Glass UI |
+| Double-tap Fn for **hands-free**; tap again to stop | Long **background** meeting recording |
+| Local Whisper via **whisper-cli** (`large-v3-turbo`) | On-device Whisper **base** (`ggml-base-q5_1`) |
+| Draggable creative recording indicator + menu-bar logo | Compact **Dynamic Island** / Live Activity with **Stop** |
+| **Meeting Brief** via Ollama (`gpt-oss:120b-cloud`) | Action Button / Siri / Control Center start **without opening the app** |
+| History, dictionary, settings tabs | Keyboard extension, history, dictionary, meeting brief |
+| Ad-hoc **DMG** for local install | Copy / Share transcript as `.md` |
 
-- macOS 14.0+ (Sonoma or later)
-- iOS 18.0+
-- OpenAI API key
-- Xcode 15.0+
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+Audio never leaves your device for transcription. Meeting Brief text is sent to Ollama **only when you tap Analyze**.
 
-## Project Structure
+---
 
-```
-Shrava/
-├── project.yml              # XcodeGen project configuration
-├── ShravaCore/              # Shared Swift Package
-│   ├── Package.swift
-│   ├── Sources/ShravaCore/
-│   │   ├── OpenAI/          # API client, transcription service
-│   │   ├── Prompts/         # Cleanup prompt builder
-│   │   ├── Dictionary/      # Personal dictionary
-│   │   ├── History/         # Dictation history
-│   │   ├── Snippets/        # Snippets model (UI pending)
-│   │   ├── Keychain/        # Secure API key storage
-│   │   ├── Settings/        # App settings
-│   │   └── Sync/            # iCloud sync manager
-│   └── Tests/ShravaCoreTests/
-├── ShravaMac/               # macOS menu bar app
-├── ShravaIOS/               # iOS host app
-├── ShravaKeyboard/          # iOS keyboard extension
-└── Shared/                  # Shared constants
-```
+## Desktop
 
-## Building
+Menu-bar app: hold your hotkey, speak, release — polished text is typed into the focused field.
+
+### Features
+
+- **Hold Fn dictation** (or Control+Option / custom hotkey) with a floating, **draggable** recording indicator and custom Shrava menu-bar logo
+- **Hands-free mode**: double-tap the hotkey to start, tap again to stop
+- **Local Whisper** through Homebrew `whisper-cli` / whisper.cpp — prefers `ggml-large-v3-turbo` in Application Support
+- **Meeting Brief**: send a transcript to **Ollama** (`gpt-oss:120b-cloud`, with non-cloud fallback) for insights and action items — API key stored in **Keychain**
+- Searchable **history**, personal **dictionary**, and Settings tabs (General, Hotkey, Model, Permissions, Meeting Brief, …)
+- Distribute as a local **DMG** (`dist/Shrava.dmg`) for ad-hoc install into `~/Applications`
+
+### Install (Mac)
+
+1. Open `dist/Shrava.dmg` (or build from source below) and drag **Shrava** to Applications (or `~/Applications`).
+2. First launch: grant **Microphone** and **Accessibility** (needed for Fn and typing into other apps).
+3. Install Whisper runtime if needed: `brew install whisper-cpp` (provides `whisper-cli`).
+4. Place a ggml model (e.g. `ggml-large-v3-turbo-q5_0.bin`) in  
+   `~/Library/Application Support/Shrava/models/`  
+   (Settings → Model shows the folder and readiness).
+5. Optional Meeting Brief: open Settings → **Meeting Brief**, choose Ollama endpoint mode, and save your Ollama API key (Keychain).
+
+**Usage:** hold **Fn** to talk; release to insert text. Double-tap Fn for hands-free. Open History / Dictionary / Settings from the menu bar.
+
+---
+
+## Mobile
+
+iPhone app with Liquid Glass chrome, long-form meeting capture, and Shortcuts that record in the background.
+
+| Record | History |
+|:---:|:---:|
+| ![Record](docs/screenshots/ios-record.png) | ![History](docs/screenshots/ios-history.png) |
+
+| Dictionary | Settings |
+|:---:|:---:|
+| ![Dictionary](docs/screenshots/ios-dictionary.png) | ![Settings](docs/screenshots/ios-settings.png) |
+
+### Features
+
+- **Liquid Glass** UI (iOS 26 design language)
+- **Long background recording** (switch apps / lock screen) with AAC capture
+- **Dynamic Island** + Lock Screen **Live Activity** — compact mic + narrow timer; **Stop** ends recording without opening the app
+- **App Intents** (`AudioRecordingIntent` + `LiveActivityIntent`, `openAppWhenRun = false`):
+  - *Start Shrava Recording* / *Stop* / *Toggle* for **Action Button**, **Back Tap**, **Shortcuts**, and **Siri**
+  - **Control Center** control (`Shrava Recording`) toggles recording without launching UI
+- On-device **Whisper base** model (download once in Settings) — no OpenAI key
+- **Meeting Brief** (Ollama) with insights / action items; **Copy** and **Share as `.md`**
+- **Shrava Keyboard** for quick capture from other apps (Full Access recommended when App Groups are available)
+
+### Action Button (start without opening the app)
+
+1. **Settings → Action Button → Shortcut**
+2. Under **Shrava**, choose **Start Recording** / **Start Shrava Recording**
+3. Press the Action Button — recording + Live Activity start; the app stays in the background
+
+### Control Center
+
+1. Open Control Center → **+** / Edit Controls  
+2. Add **Shrava Recording**  
+3. Tap to start/stop without opening Shrava  
+
+> **Note (free Apple ID):** personal-team builds expire about every **7 days** and must be reinstalled from Xcode. App Groups / iCloud may be unavailable on free signing, so keyboard ↔ app sharing can be limited.
+
+---
+
+## Privacy
+
+- **Transcription audio stays on device** (Mac: whisper-cli; iPhone: embedded whisper.cpp).
+- **Meeting Brief** sends transcript **text** to Ollama only when you tap **Analyze** (not while recording).
+- Ollama API keys (if used) are stored in the **Keychain** — never commit keys to git or the README.
+- No OpenAI account is required for dictation.
+
+---
+
+## Build from source
 
 ### Prerequisites
 
-1. Install XcodeGen:
-   ```bash
-   brew install xcodegen
-   ```
+- macOS with **Xcode 16+** (iOS 18 / 26 SDK)
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
+- Mac dictation: `brew install whisper-cpp` + a ggml model under Application Support (see above)
+- iOS Whisper binary framework:
 
-2. Get an OpenAI API key from [platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+```bash
+./scripts/fetch-whisper-xcframework.sh
+```
 
-### Generate Xcode Project
+### Generate & open
 
 ```bash
 cd Shrava
 xcodegen generate
+open Shrava.xcodeproj
 ```
 
-This creates `Shrava.xcodeproj` from `project.yml`.
+### macOS (ad-hoc / local)
 
-### Configure Signing
+1. Scheme **ShravaMac**
+2. Signing: your Personal Team or ad-hoc; empty entitlements override is fine for local use
+3. Build & run (or archive → DMG for `~/Applications`)
 
-1. Open `Shrava.xcodeproj` in Xcode
-2. Select each target and configure:
-   - **Team**: Select your development team
-   - **Bundle Identifier**: Update if needed (default: `com.shrava.*`)
+### iPhone (free Apple ID)
 
-### App Group Setup (iOS)
+1. Connect your iPhone; scheme **ShravaIOS**
+2. Signing & Capabilities: select your **Personal Team** (free Apple ID)
+3. Run to device  
+4. Re-sign / reinstall about every **7 days** when the free provisioning profile expires  
+5. First launch: allow Microphone; download the Whisper base model in Settings; enable Live Activities for Shrava if prompted  
 
-The iOS app and keyboard extension share data via an App Group:
+For background shortcut recording, grant mic once in-app, then use Action Button / Control Center / Siri as above.
 
-1. In Xcode, select the **ShravaIOS** target
-2. Go to **Signing & Capabilities**
-3. Verify **App Groups** capability with `group.com.shrava`
-4. Repeat for **ShravaKeyboard** target
+### Project layout
 
-If using a different App Group identifier, update:
-- `project.yml` entitlements
-- `ShravaCore/Sources/ShravaCore/ShravaCore.swift` (`appGroupIdentifier`)
-- `Shared/SharedConstants.swift`
-
-### iCloud Setup (Optional)
-
-For cross-device sync:
-
-1. Enable **iCloud** capability on both iOS and macOS targets
-2. Enable **Key-value storage**
-3. The container identifier is `iCloud.com.shrava`
-
-### Build and Run
-
-**macOS:**
-```bash
-# Select ShravaMac scheme
-# Build: Cmd+B
-# Run: Cmd+R
+```
+Shrava/
+├── project.yml                 # XcodeGen
+├── scripts/fetch-whisper-xcframework.sh
+├── ShravaCore/                 # Shared models, history, dictionary, Ollama client, Keychain
+├── ShravaMac/                  # Menu bar app, hotkeys, LocalWhisper, Meeting Brief UI
+├── ShravaIOS/                  # Host app, recorder, intents bridge, Liquid Glass UI
+├── ShravaKeyboard/             # Keyboard extension
+├── ShravaLiveActivity/         # Live Activity + Control Center widget
+├── Shared/                     # Recording intents, activity attributes, constants
+├── docs/screenshots/           # README screenshots (committed)
+└── dist/                       # Local DMG / preview dumps (not all committed)
 ```
 
-**iOS:**
-```bash
-# Select ShravaIOS scheme
-# Select your iPhone or simulator
-# Build: Cmd+B
-# Run: Cmd+R
-```
-
-## Running on Devices
-
-### macOS
-
-1. Build and run the **ShravaMac** scheme
-2. The app appears in the menu bar (waveform icon)
-3. Complete onboarding:
-   - Enter your OpenAI API key
-   - Grant microphone permission
-   - Grant accessibility permission (for text insertion and global hotkey)
-
-**Usage:**
-- Hold **Fn** (or **Ctrl+Option**) to record
-- Release to transcribe and insert text
-- Access settings, history, and dictionary from the menu bar
-
-### iOS
-
-1. Build and run the **ShravaIOS** scheme on your iPhone
-2. Complete onboarding:
-   - Enter your OpenAI API key
-   - Grant microphone permission
-3. Install the keyboard extension:
-   - Go to **Settings > General > Keyboard > Keyboards**
-   - Tap **Add New Keyboard...**
-   - Select **Shrava Keyboard**
-   - Tap **Shrava Keyboard** and enable **Allow Full Access**
-
-**Usage (Host App):**
-- Tap and hold the record button to dictate
-- Release to transcribe
-- Copy the result or view history
-
-**Usage (Keyboard):**
-- In any app, switch to **Shrava Keyboard**
-- Tap the **microphone button** to open Shrava for recording
-- After recording, return to your app
-- The transcribed text is automatically inserted
-
-## Permissions
-
-### macOS
-
-| Permission | Purpose |
-|------------|---------|
-| Microphone | Record audio for transcription |
-| Accessibility | Insert text into focused fields, register global hotkey |
-| Network | Send audio to OpenAI API |
-
-### iOS
-
-| Permission | Purpose |
-|------------|---------|
-| Microphone | Record audio for transcription |
-| Full Access (Keyboard) | Communicate with host app via App Group |
-
-## Configuration
-
-### Global Hotkey (macOS)
-
-Default: **Fn** key (hold to talk)
-
-To change:
-1. Open Settings from menu bar
-2. Go to **Hotkey** tab
-3. Click **Change** and press your preferred key combination
-4. Or use **Control+Option** preset
-
-### Language
-
-Supports 28 languages including English, Spanish, French, German, Japanese, Chinese, and more. Set in app settings.
-
-### Personal Dictionary
-
-Add custom word corrections:
-- **Spoken**: How you say it (e.g., "john doe")
-- **Written**: How to write it (e.g., "John Doe")
-
-The AI cleanup pass respects dictionary entries.
-
-## API Usage & Costs
-
-Shrava uses the OpenAI API. Estimated costs per minute of audio:
-
-| Model | Cost |
-|-------|------|
-| gpt-4o-transcribe | ~$0.006/min |
-| gpt-4o-mini (cleanup) | ~$0.0001/request |
-
-Total: approximately **$0.01 per minute** of dictation.
-
-## Testing
-
-### Unit Tests
-
-```bash
-cd ShravaCore
-swift test
-```
-
-Tests cover:
-- Cleanup prompt building
-- Dictionary corrections
-- History management
-- Settings serialization
-- Mock API client
-
-Note: Full tests require macOS with Swift toolchain. Core package tests can also run on Linux.
+---
 
 ## Troubleshooting
 
-### "Microphone permission not granted"
-- macOS: System Preferences > Privacy & Security > Microphone
-- iOS: Settings > Shrava > Microphone
+| Issue | What to try |
+| --- | --- |
+| Fn does nothing (Mac) | Toggle Shrava off/on under **System Settings → Privacy & Security → Accessibility** |
+| `whisper-cli not installed` | `brew install whisper-cpp`; confirm Settings → Model |
+| Model not ready (Mac) | Drop `ggml-large-v3-turbo*.bin` into Application Support → Shrava → models |
+| Model not ready (iPhone) | Settings → download Whisper base; keep the app open until finished |
+| Shortcut opens the app | Use the **Start Shrava Recording** App Shortcut (not an Open App / URL action) |
+| Live Activity missing | Settings → Shrava → Live Activities; AudioRecordingIntent requires an active Live Activity |
+| Free-team install expired | Rebuild/run from Xcode (≈7-day personal provisioning) |
 
-### "Invalid API key"
-- Verify your OpenAI API key at platform.openai.com
-- Re-enter the key in Settings
+---
 
-### Text not inserting (macOS)
-- Grant Accessibility permission in System Preferences
-- If still failing, the app falls back to clipboard paste (Cmd+V)
+## License & credit
 
-### Keyboard not showing transcription (iOS)
-- Ensure **Allow Full Access** is enabled for the keyboard
-- Tap the mic button to open the host app
-- After recording, manually switch back to the original app
+© 2026 Shrava. Developed by Nitin Kanish, [Debugged Pro](https://debuggedpro.com).
 
-## Architecture
-
-### ShravaCore (Swift Package)
-
-Platform-agnostic core logic:
-- `OpenAIClient`: Handles transcription and chat completion API calls
-- `TranscriptionService`: Orchestrates transcription + cleanup workflow
-- `CleanupPromptBuilder`: Generates system prompts with filler word removal, punctuation, and dictionary
-- `PersonalDictionary`: Word replacement management
-- `HistoryManager`: Transcription history storage
-- `KeychainManager`: Secure API key storage
-- `CloudSyncManager`: iCloud key-value sync
-
-### macOS App
-
-- Menu bar app (LSUIElement)
-- Global hotkey via CGEvent tap
-- Text insertion via Accessibility API with clipboard fallback
-- Floating recording indicator
-
-### iOS App
-
-- SwiftUI host app with tab navigation
-- URL scheme handler for keyboard integration
-- App Group for sharing transcriptions
-
-### iOS Keyboard Extension
-
-- Basic QWERTY fallback layout
-- Globe key for keyboard switching
-- Mic button opens host app via URL scheme
-- Reads transcription from App Group
-
-## Known Gaps
-
-- **Snippets UI**: Model exists but UI is not implemented
-- **Tone per app**: Not implemented
-- **Hands-free mode**: Not implemented
-- **Voice commands**: Not implemented
-- **Meeting notes**: Not implemented
-
-## License
-
-Copyright © 2024 Shrava. All rights reserved.
-
-This is a clean-room implementation. No code, assets, prompts, or branding from other voice dictation apps.
+Clean-room implementation. No third-party dictation app code, assets, or prompts.

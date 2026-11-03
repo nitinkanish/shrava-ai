@@ -12,6 +12,6 @@ Vendor/whisper.xcframework/
 Vendor/*.zip
 *.partial
 
-# UI screenshots (local previews)
+# Local preview dumps (optimized copies for README live in docs/screenshots/)
 dist/screens/*
 !dist/screens/ios-*.png
