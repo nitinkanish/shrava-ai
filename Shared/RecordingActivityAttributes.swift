@@ -10,11 +10,19 @@ public struct RecordingActivityAttributes: ActivityAttributes {
         public var isPaused: Bool
         /// Frozen elapsed seconds while paused (for display).
         public var frozenElapsed: TimeInterval
+        /// Optional status line while paused (e.g. "Paused — call in progress").
+        public var pauseReason: String?
 
-        public init(timerStart: Date = Date(), isPaused: Bool = false, frozenElapsed: TimeInterval = 0) {
+        public init(
+            timerStart: Date = Date(),
+            isPaused: Bool = false,
+            frozenElapsed: TimeInterval = 0,
+            pauseReason: String? = nil
+        ) {
             self.timerStart = timerStart
             self.isPaused = isPaused
             self.frozenElapsed = frozenElapsed
+            self.pauseReason = pauseReason
         }
     }
 

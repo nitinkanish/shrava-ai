@@ -28,9 +28,13 @@ struct ShravaRecordingLiveActivity: Widget {
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack(spacing: 8) {
-                        Text(context.state.isPaused ? "Paused" : "Meeting")
+                        Text(context.state.isPaused
+                             ? (context.state.pauseReason ?? "Paused")
+                             : "Meeting")
                             .font(.caption2.weight(.medium))
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                         Spacer(minLength: 0)
                         Button(intent: StopRecordingIntent()) {
                             Text("Stop")
@@ -89,9 +93,13 @@ struct ShravaRecordingLiveActivity: Widget {
             VStack(alignment: .leading, spacing: 1) {
                 Text("Shrava")
                     .font(.subheadline.weight(.semibold))
-                Text(context.state.isPaused ? "Paused" : "Recording")
+                Text(context.state.isPaused
+                     ? (context.state.pauseReason ?? "Paused")
+                     : "Recording")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
 
             Spacer(minLength: 4)

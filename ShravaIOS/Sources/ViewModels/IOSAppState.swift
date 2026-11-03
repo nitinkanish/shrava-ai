@@ -2,10 +2,11 @@ import SwiftUI
 import AVFoundation
 import ActivityKit
 import WidgetKit
+import CallKit
 import ShravaCore
 
 @MainActor
-final class IOSAppState: ObservableObject {
+final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     static let shared = IOSAppState()
 
     @Published var isRecording = false
@@ -37,6 +38,13 @@ final class IOSAppState: ObservableObject {
     private var accumulatedPause: TimeInterval = 0
     private var liveActivity: Activity<RecordingActivityAttributes>?
     private var stopObserver: NSObjectProtocol?
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    /// Start was requested while a phone call was active — auto-start when it ends.
+    private var pendingStartAfterCall = false
+    private var pendingStartTitle = "Meeting"
+    private var pendingStartFromIntent = false
+    /// Gap markers to inject into the transcript (phone-call pauses, etc.).
+    private var transcriptGapMarkers: [String] = []
 
     let dictionary: PersonalDictionary
     let historyManager: HistoryManager
@@ -50,6 +58,8 @@ final class IOSAppState: ObservableObject {
         setupCloudSync()
         setupAudioSession()
         observeStopIntent()
+        setupCallMonitor()
+        observeLifecycleForResume()
     }
 
     private func setupCloudSync() {
@@ -59,15 +69,74 @@ final class IOSAppState: ObservableObject {
     }
 
     private func setupAudioSession() {
+        // Category only — do not activate until we actually record (avoids fighting CallKit).
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(
                 .playAndRecord,
-                mode: .default,
-                options: [.allowBluetoothHFP, .defaultToSpeaker, .mixWithOthers]
+                mode: .spokenAudio,
+                options: [.allowBluetoothHFP, .defaultToSpeaker]
             )
         } catch {
             print("Failed to setup audio session: \(error)")
+        }
+    }
+
+    private func setupCallMonitor() {
+        PhoneCallMonitor.shared.onCallsChanged = { [weak self] hasCall in
+            Task { @MainActor in
+                self?.handlePhoneCallStateChange(hasActiveCall: hasCall)
+            }
+        }
+    }
+
+    private func observeLifecycleForResume() {
+        let center = NotificationCenter.default
+        let names: [Notification.Name] = [
+            UIApplication.didBecomeActiveNotification,
+            UIApplication.willEnterForegroundNotification
+        ]
+        for name in names {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    self?.retryResumeAfterLifecycle()
+                }
+            }
+            lifecycleObservers.append(token)
+        }
+    }
+
+    private func handlePhoneCallStateChange(hasActiveCall: Bool) {
+        if hasActiveCall {
+            guard isRecording, isLongRecording, !isPaused else { return }
+            audioRecorder?.pause(reason: .phoneCall)
+            return
+        }
+        // Call ended.
+        if pendingStartAfterCall {
+            let title = pendingStartTitle
+            let fromIntent = pendingStartFromIntent
+            pendingStartAfterCall = false
+            lastError = nil
+            Task {
+                if fromIntent {
+                    await startLongRecordingFromIntent(title: title)
+                } else {
+                    await startLongRecording(title: title)
+                }
+            }
+            return
+        }
+        if isRecording, isLongRecording, isPaused {
+            audioRecorder?.resumeWithRetry(trigger: "callEnded")
+        }
+    }
+
+    private func retryResumeAfterLifecycle() {
+        guard isRecording, isLongRecording else { return }
+        if PhoneCallMonitor.shared.hasActiveCall { return }
+        if isPaused || audioRecorder?.isRecording == false {
+            audioRecorder?.resumeWithRetry(trigger: "lifecycle")
         }
     }
 
@@ -131,18 +200,16 @@ final class IOSAppState: ObservableObject {
             return
         }
 
-        isRecording = true
-        isLongRecording = true
-        isPaused = false
-        recordingDuration = 0
-        accumulatedPause = 0
-        recordingStartedAt = Date()
-        pauseStartedAt = nil
-        lastError = nil
-        showingResult = false
-        transcriptionProgress = 0
-        audioLevel = 0
-        waveformSamples = Array(repeating: 0.08, count: 32)
+        if isInPhoneCall {
+            pendingStartAfterCall = true
+            pendingStartTitle = title
+            pendingStartFromIntent = true
+            lastError = RecordingError.callInProgress.errorDescription
+            RecordingIntentBridge.settle(reason: "failed")
+            return
+        }
+
+        beginLongRecordingSession(title: title)
 
         // 1) Live Activity FIRST (AudioRecordingIntent contract).
         let laOK = await startLiveActivity(title: title)
@@ -154,10 +221,12 @@ final class IOSAppState: ObservableObject {
         }
 
         // 2) Start recorder while intent perform() is still waiting.
-        audioRecorder = IOSAudioRecorder()
+        let recorder = IOSAudioRecorder()
+        attachRecorderDelegate(recorder)
+        audioRecorder = recorder
         do {
-            try await audioRecorder?.startRecording(mode: .long)
-            guard audioRecorder?.isRecording == true else {
+            try await recorder.startRecording(mode: .long)
+            guard recorder.isRecording else {
                 throw RecordingError.failedToStart(NSError(domain: "Shrava", code: -3, userInfo: [
                     NSLocalizedDescriptionKey: "Recorder did not start"
                 ]))
@@ -168,13 +237,28 @@ final class IOSAppState: ObservableObject {
             RecordingIntentBridge.settle(reason: "ok")
             haptic(.medium)
         } catch {
+            // If activation failed because a call raced in, defer instead of fatal error.
+            if isInPhoneCall {
+                audioRecorder?.cancelRecording()
+                audioRecorder = nil
+                await endLiveActivity()
+                isRecording = false
+                isLongRecording = false
+                UIApplication.shared.isIdleTimerDisabled = false
+                pendingStartAfterCall = true
+                pendingStartTitle = title
+                pendingStartFromIntent = true
+                lastError = RecordingError.callInProgress.errorDescription
+                RecordingIntentBridge.settle(reason: "failed")
+                return
+            }
             audioRecorder?.cancelRecording()
             audioRecorder = nil
             await endLiveActivity()
             isRecording = false
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
-            lastError = "Failed to start recording: \(error.localizedDescription)"
+            lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
             RecordingIntentBridge.settle(reason: "failed")
         }
     }
@@ -193,6 +277,7 @@ final class IOSAppState: ObservableObject {
             }
         }
 
+        pendingStartAfterCall = false
         stopRecordingTimer()
         isRecording = false
         isPaused = false
@@ -202,7 +287,7 @@ final class IOSAppState: ObservableObject {
         audioLevel = 0
         UIApplication.shared.isIdleTimerDisabled = false
 
-        let url = audioRecorder?.stopLongRecording()
+        let url = await audioRecorder?.stopLongRecording()
         // End Live Activity BEFORE deactivating session (AudioRecordingIntent contract).
         await endLiveActivity()
         audioRecorder?.deactivateAfterStop()
@@ -272,6 +357,81 @@ final class IOSAppState: ObservableObject {
         AVAudioApplication.shared.recordPermission == .granted
     }
 
+
+    /// True when a cellular/FaceTime call currently owns the mic.
+    private var isInPhoneCall: Bool { PhoneCallMonitor.shared.hasActiveCall }
+
+    private func beginLongRecordingSession(title: String) {
+        isRecording = true
+        isLongRecording = true
+        isPaused = false
+        recordingDuration = 0
+        accumulatedPause = 0
+        recordingStartedAt = Date()
+        pauseStartedAt = nil
+        lastError = nil
+        showingResult = false
+        transcriptionProgress = 0
+        audioLevel = 0
+        waveformSamples = Array(repeating: 0.08, count: 32)
+        transcriptGapMarkers = []
+    }
+
+    private func attachRecorderDelegate(_ recorder: IOSAudioRecorder) {
+        recorder.delegate = self
+    }
+
+    // MARK: - IOSAudioRecorderDelegate
+
+    nonisolated func audioRecorderDidBeginInterruption(_ recorder: IOSAudioRecorder, reason: RecordingPauseReason) {
+        Task { @MainActor in
+            guard self.isRecording, self.isLongRecording else { return }
+            if let marker = reason.transcriptGapMarker {
+                if self.transcriptGapMarkers.last != marker {
+                    self.transcriptGapMarkers.append(marker)
+                }
+            }
+            if !self.isPaused {
+                if self.pauseStartedAt == nil { self.pauseStartedAt = Date() }
+                self.isPaused = true
+            }
+            await self.updateLiveActivityPaused(true, reason: reason.liveActivityMessage)
+            // Soft status — never a fatal error for a phone-call pause.
+            if reason == .phoneCall || reason == .audioInterruption {
+                self.lastError = reason.liveActivityMessage
+            }
+        }
+    }
+
+    nonisolated func audioRecorderDidResume(_ recorder: IOSAudioRecorder) {
+        Task { @MainActor in
+            guard self.isRecording, self.isLongRecording else { return }
+            if let pauseStartedAt = self.pauseStartedAt {
+                self.accumulatedPause += Date().timeIntervalSince(pauseStartedAt)
+            }
+            self.pauseStartedAt = nil
+            self.isPaused = false
+            if self.lastError?.contains("Paused") == true || self.lastError?.contains("call") == true {
+                self.lastError = nil
+            }
+            await self.updateLiveActivityPaused(false, reason: nil)
+        }
+    }
+
+    nonisolated func audioRecorderResumeFailed(_ recorder: IOSAudioRecorder, error: Error, willRetry: Bool) {
+        Task { @MainActor in
+            guard self.isRecording, self.isLongRecording else { return }
+            // Transient — keep recording session alive; show soft status only.
+            self.isPaused = true
+            if self.pauseStartedAt == nil { self.pauseStartedAt = Date() }
+            let msg = willRetry
+                ? "Paused — waiting to resume (\(error.localizedDescription))"
+                : "Paused — could not resume yet. Tap Resume or reopen Shrava after the call."
+            self.lastError = msg
+            await self.updateLiveActivityPaused(true, reason: "Paused — waiting to resume")
+        }
+    }
+
     // MARK: - Quick (hold-to-talk)
 
     func startRecording() async {
@@ -306,18 +466,15 @@ final class IOSAppState: ObservableObject {
         guard !isRecording else { return }
         guard await prepareToRecord() else { return }
 
-        isRecording = true
-        isLongRecording = true
-        isPaused = false
-        recordingDuration = 0
-        accumulatedPause = 0
-        recordingStartedAt = Date()
-        pauseStartedAt = nil
-        lastError = nil
-        showingResult = false
-        transcriptionProgress = 0
-        audioLevel = 0
-        waveformSamples = Array(repeating: 0.08, count: 32)
+        if isInPhoneCall {
+            pendingStartAfterCall = true
+            pendingStartTitle = title
+            pendingStartFromIntent = false
+            lastError = RecordingError.callInProgress.errorDescription
+            return
+        }
+
+        beginLongRecordingSession(title: title)
 
         // Live Activity before recorder (same contract as AudioRecordingIntent).
         let laOK = await startLiveActivity(title: title)
@@ -326,19 +483,37 @@ final class IOSAppState: ObservableObject {
             lastError = "Live Activities are off — enable them for Dynamic Island + shortcuts."
         }
 
-        audioRecorder = IOSAudioRecorder()
+        let recorder = IOSAudioRecorder()
+        attachRecorderDelegate(recorder)
+        audioRecorder = recorder
         do {
-            try await audioRecorder?.startRecording(mode: .long)
+            try await recorder.startRecording(mode: .long)
             UIApplication.shared.isIdleTimerDisabled = true
             startRecordingTimer()
             reloadRecordingControl()
             haptic(.medium)
         } catch {
+            if isInPhoneCall {
+                audioRecorder?.cancelRecording()
+                audioRecorder = nil
+                isRecording = false
+                isLongRecording = false
+                UIApplication.shared.isIdleTimerDisabled = false
+                await endLiveActivity()
+                pendingStartAfterCall = true
+                pendingStartTitle = title
+                pendingStartFromIntent = false
+                lastError = RecordingError.callInProgress.errorDescription
+                return
+            }
+            audioRecorder?.cancelRecording()
+            audioRecorder = nil
             isRecording = false
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
             await endLiveActivity()
-            lastError = "Failed to start recording: \(error.localizedDescription)"
+            // Soft message — activation often fails transiently right after a call.
+            lastError = "Couldn't start yet: \(error.localizedDescription). Try again in a moment."
         }
     }
 
@@ -352,27 +527,20 @@ final class IOSAppState: ObservableObject {
 
     func pauseLongRecording() async {
         guard isRecording, isLongRecording, !isPaused else { return }
-        audioRecorder?.pause()
-        isPaused = true
-        pauseStartedAt = Date()
-        await updateLiveActivityPaused(true)
+        audioRecorder?.pause(reason: .manual)
+        // Delegate updates isPaused + Live Activity.
         haptic(.light)
     }
 
     func resumeLongRecording() async {
         guard isRecording, isLongRecording, isPaused else { return }
-        do {
-            if let pauseStartedAt {
-                accumulatedPause += Date().timeIntervalSince(pauseStartedAt)
-            }
-            pauseStartedAt = nil
-            try audioRecorder?.resume()
-            isPaused = false
-            await updateLiveActivityPaused(false)
-            haptic(.light)
-        } catch {
-            lastError = "Failed to resume: \(error.localizedDescription)"
+        if isInPhoneCall {
+            lastError = RecordingError.callInProgress.errorDescription
+            return
         }
+        // Prefer retrying resume so a single activation blip isn't fatal.
+        audioRecorder?.resumeWithRetry(trigger: "userResume")
+        haptic(.light)
     }
 
     func stopRecordingAndTranscribe() async {
@@ -427,7 +595,7 @@ final class IOSAppState: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
         haptic(.light)
 
-        let url = audioRecorder?.stopLongRecording()
+        let url = await audioRecorder?.stopLongRecording()
         await endLiveActivity()
         audioRecorder?.deactivateAfterStop()
         audioRecorder = nil
@@ -460,10 +628,12 @@ final class IOSAppState: ObservableObject {
     }
 
     func cancelRecording() async {
-        guard isRecording else { return }
+        guard isRecording || pendingStartAfterCall else { return }
+        pendingStartAfterCall = false
         stopRecordingTimer()
         isRecording = false
         isPaused = false
+        transcriptGapMarkers = []
         UIApplication.shared.isIdleTimerDisabled = false
         audioRecorder?.cancelRecording()
         audioRecorder = nil
@@ -495,14 +665,24 @@ final class IOSAppState: ObservableObject {
         }
     }
 
-    private func updateLiveActivityPaused(_ paused: Bool) async {
+    private func updateLiveActivityPaused(_ paused: Bool, reason: String? = nil) async {
         guard let liveActivity else { return }
         let elapsed = recordingDuration
         let state: RecordingActivityAttributes.ContentState
         if paused {
-            state = .init(timerStart: Date(), isPaused: true, frozenElapsed: elapsed)
+            state = .init(
+                timerStart: Date(),
+                isPaused: true,
+                frozenElapsed: elapsed,
+                pauseReason: reason ?? "Paused"
+            )
         } else {
-            state = .init(timerStart: Date().addingTimeInterval(-elapsed), isPaused: false, frozenElapsed: 0)
+            state = .init(
+                timerStart: Date().addingTimeInterval(-elapsed),
+                isPaused: false,
+                frozenElapsed: 0,
+                pauseReason: nil
+            )
         }
         await liveActivity.update(.init(state: state, staleDate: nil))
     }
@@ -537,12 +717,20 @@ final class IOSAppState: ObservableObject {
     }
 
     private func finishTranscription(_ result: TranscriptionResult) async {
-        lastTranscription = result.cleanedText
+        var cleaned = result.cleanedText
+        var original = result.originalText
+        if !transcriptGapMarkers.isEmpty {
+            let gaps = transcriptGapMarkers.joined(separator: "\n")
+            cleaned = cleaned.isEmpty ? gaps : gaps + "\n\n" + cleaned
+            original = original.isEmpty ? gaps : gaps + "\n\n" + original
+            transcriptGapMarkers = []
+        }
+        lastTranscription = cleaned
         showingResult = true
 
         let entry = HistoryEntry(
-            originalText: result.originalText,
-            cleanedText: result.cleanedText,
+            originalText: original,
+            cleanedText: cleaned,
             language: result.language.rawValue,
             durationSeconds: result.durationSeconds
         )

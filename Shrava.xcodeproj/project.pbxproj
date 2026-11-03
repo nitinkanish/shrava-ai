@@ -47,6 +47,7 @@
 		CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */; };
 		CC42A8CF0809B7E533D8D7A2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */; };
 		CC850739A352435E5E4F1044 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */; };
+		D55BEB0485C342CEFF142C8C /* PhoneCallMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4FC584115390C87BA8655DD /* PhoneCallMonitor.swift */; };
 		D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */; };
 		DCA16B7D2F27CD267D0AA239 /* RecordingIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */; };
 		DFD648EA6A03F88FA6F7F47C /* ShravaTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2158C262EA7175DB24133D6 /* ShravaTheme.swift */; };
@@ -133,6 +134,7 @@
 		AAB1E0377A1DAF0068C590DC /* LocalWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisper.swift; sourceTree = "<group>"; };
 		ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppState.swift; sourceTree = "<group>"; };
 		B2158C262EA7175DB24133D6 /* ShravaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaTheme.swift; sourceTree = "<group>"; };
+		B4FC584115390C87BA8655DD /* PhoneCallMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCallMonitor.swift; sourceTree = "<group>"; };
 		B7111A0D457BF0009F60CF7B /* ShravaShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaShortcuts.swift; sourceTree = "<group>"; };
 		BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIntents.swift; sourceTree = "<group>"; };
 		BD3DE7136B9BBE91C77E012B /* DictionaryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryWindowController.swift; sourceTree = "<group>"; };
@@ -208,6 +210,7 @@
 			isa = PBXGroup;
 			children = (
 				F81DB93856658BCD26673A7D /* IOSAudioRecorder.swift */,
+				B4FC584115390C87BA8655DD /* PhoneCallMonitor.swift */,
 			);
 			path = Recording;
 			sourceTree = "<group>";
@@ -639,6 +642,7 @@
 				EB4F27D3E21B9B5CAD85D945 /* IOSOnboardingView.swift in Sources */,
 				349DE7BBDC8AD6A480614539 /* IOSSettingsView.swift in Sources */,
 				694D377DB3D4665F3375610F /* IOSWhisper.swift in Sources */,
+				D55BEB0485C342CEFF142C8C /* PhoneCallMonitor.swift in Sources */,
 				D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */,
 				623C18FA56195207861B8AC0 /* RecordingIntents.swift in Sources */,
 				F937C5AE05713B1F2FD6C592 /* RecordingView.swift in Sources */,
