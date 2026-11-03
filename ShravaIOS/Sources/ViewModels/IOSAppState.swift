@@ -74,6 +74,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         observeLifecycleForResume()
         registerContinuedProcessingTask()
         Task { @MainActor in
+            // Drop orphaned/stale Live Activities from killed sessions so they
+            // cannot stick around showing a failed/error chrome.
+            await self.endAllLiveActivities(reason: "launch-cleanup")
             await self.recoverOrphanedRecordings()
             await self.resumePendingTranscriptions()
         }
@@ -377,7 +380,6 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         UIApplication.shared.isIdleTimerDisabled = false
 
         let url = await audioRecorder?.stopLongRecording()
-        await endLiveActivity()
         audioRecorder?.deactivateAfterStop()
         audioRecorder = nil
         reloadRecordingControl()
@@ -387,9 +389,12 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             lastError = "No audio file recorded"
             isProcessing = false
             debugLog("STOP intent: no audio url")
+            await markLiveActivityFailed("No audio file recorded")
             return "failed"
         }
 
+        // Keep Live Activity alive through transcription (intent may run in background).
+        await updateLiveActivityTranscribing(progress: 0, elapsed: duration)
         debugLog("STOP intent: file=\(url.lastPathComponent) dur=\(String(format: "%.1f", duration))s — queuing transcription")
         await beginTranscriptionPipeline(url: url, durationSeconds: duration, recoveredTitle: nil)
         return "ok"
@@ -742,7 +747,6 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         haptic(.light)
 
         let url = await audioRecorder?.stopLongRecording()
-        await endLiveActivity()
         audioRecorder?.deactivateAfterStop()
         audioRecorder = nil
         reloadRecordingControl()
@@ -751,9 +755,11 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         guard let url else {
             lastError = "No audio file recorded"
             isProcessing = false
+            await markLiveActivityFailed("No audio file recorded")
             return
         }
 
+        await updateLiveActivityTranscribing(progress: 0, elapsed: duration)
         debugLog("STOP path=in-app file=\(url.lastPathComponent) dur=\(String(format: "%.1f", duration))s")
         await beginTranscriptionPipeline(url: url, durationSeconds: duration, recoveredTitle: nil)
     }
@@ -785,13 +791,16 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return false
         }
         // Dismiss stale activities so a prior failed session cannot look "already recording".
-        for activity in Activity<RecordingActivityAttributes>.activities {
-            await activity.end(nil, dismissalPolicy: .immediate)
-        }
-        liveActivity = nil
+        await endAllLiveActivities(reason: "before-start")
 
         let attributes = RecordingActivityAttributes(title: title)
-        let state = RecordingActivityAttributes.ContentState(timerStart: Date(), isPaused: false, frozenElapsed: 0)
+        let state = RecordingActivityAttributes.ContentState(
+            timerStart: Date(),
+            isPaused: false,
+            frozenElapsed: 0,
+            phase: .recording,
+            progress: 0
+        )
         do {
             // Activity.request is synchronous but can stall under free signing — bound it.
             let activity = try await withThrowingTaskGroup(of: Activity<RecordingActivityAttributes>.self) { group in
@@ -822,7 +831,15 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         }
     }
 
+    /// Prefer the in-memory handle; fall back to any system-tracked activity (intent / cold start).
+    private func adoptLiveActivityIfNeeded() {
+        if liveActivity == nil {
+            liveActivity = Activity<RecordingActivityAttributes>.activities.first
+        }
+    }
+
     private func updateLiveActivityPaused(_ paused: Bool, reason: String? = nil) async {
+        adoptLiveActivityIfNeeded()
         guard let liveActivity else { return }
         let elapsed = recordingDuration
         let state: RecordingActivityAttributes.ContentState
@@ -831,42 +848,102 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 timerStart: Date(),
                 isPaused: true,
                 frozenElapsed: elapsed,
-                pauseReason: reason ?? "Paused"
+                pauseReason: reason ?? "Paused",
+                phase: .paused,
+                progress: 0
             )
         } else {
             state = .init(
                 timerStart: Date().addingTimeInterval(-elapsed),
                 isPaused: false,
                 frozenElapsed: 0,
-                pauseReason: nil
+                pauseReason: nil,
+                phase: .recording,
+                progress: 0
             )
         }
         await liveActivity.update(.init(state: state, staleDate: nil))
     }
 
-    private func endLiveActivity() async {
+    /// Post-stop: keep the Island alive and show transcription progress (intent + in-app).
+    private func updateLiveActivityTranscribing(progress: Double, elapsed: TimeInterval? = nil) async {
+        adoptLiveActivityIfNeeded()
         guard let liveActivity else {
-            await endAllLiveActivities()
+            debugLog("LA: transcribing update skipped — no activity")
+            return
+        }
+        let pct = max(0, min(100, Int((progress * 100).rounded())))
+        let frozen = elapsed ?? recordingDuration
+        let state = RecordingActivityAttributes.ContentState(
+            timerStart: Date(),
+            isPaused: true,
+            frozenElapsed: frozen,
+            pauseReason: "Transcribing… \(pct)%",
+            phase: .transcribing,
+            progress: progress
+        )
+        await liveActivity.update(.init(state: state, staleDate: nil))
+        debugLog("LA: transcribing \(pct)%")
+    }
+
+    /// Final success — brief Saved ✓ then dismiss after ~4s. Never use failed chrome here.
+    private func markLiveActivitySaved() async {
+        adoptLiveActivityIfNeeded()
+        guard let liveActivity else { return }
+        let state = RecordingActivityAttributes.ContentState(
+            timerStart: Date(),
+            isPaused: true,
+            frozenElapsed: recordingDuration,
+            pauseReason: "Saved ✓",
+            phase: .saved,
+            progress: 1
+        )
+        let dismissAt = Date().addingTimeInterval(4)
+        let savedID = liveActivity.id
+        await liveActivity.end(.init(state: state, staleDate: nil), dismissalPolicy: .after(dismissAt))
+        debugLog("LA: saved — dismiss after 4s id=\(savedID)")
+        self.liveActivity = nil
+        // Sweep any duplicates without overriding the Saved banner on the one we just ended.
+        for activity in Activity<RecordingActivityAttributes>.activities where activity.id != savedID {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+    }
+
+    /// Only for a definitive final failure — never for transient chunk/retry noise.
+    private func markLiveActivityFailed(_ message: String) async {
+        adoptLiveActivityIfNeeded()
+        guard let liveActivity else {
+            await endAllLiveActivities(reason: "failed-no-handle")
             return
         }
         let state = RecordingActivityAttributes.ContentState(
             timerStart: Date(),
             isPaused: true,
-            frozenElapsed: recordingDuration
+            frozenElapsed: recordingDuration,
+            pauseReason: message,
+            phase: .failed,
+            progress: transcriptionProgress
         )
-        await liveActivity.end(.init(state: state, staleDate: nil), dismissalPolicy: .immediate)
+        let dismissAt = Date().addingTimeInterval(6)
+        await liveActivity.end(.init(state: state, staleDate: nil), dismissalPolicy: .after(dismissAt))
+        debugLog("LA: failed — \(message)")
         self.liveActivity = nil
-        await endAllLiveActivities()
+        for activity in Activity<RecordingActivityAttributes>.activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
     }
 
-    private func endAllLiveActivities() async {
-        for activity in Activity<RecordingActivityAttributes>.activities {
-            let state = RecordingActivityAttributes.ContentState(
-                timerStart: Date(),
-                isPaused: true,
-                frozenElapsed: recordingDuration
-            )
-            await activity.end(.init(state: state, staleDate: nil), dismissalPolicy: .immediate)
+    private func endLiveActivity() async {
+        await endAllLiveActivities(reason: "end")
+    }
+
+    private func endAllLiveActivities(reason: String = "sweep") async {
+        let activities = Activity<RecordingActivityAttributes>.activities
+        if !activities.isEmpty {
+            debugLog("LA: endAll count=\(activities.count) reason=\(reason)")
+        }
+        for activity in activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
         }
         liveActivity = nil
     }
@@ -926,6 +1003,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             )
             await finishTranscription(result, replacing: entryID, audioFileName: fileName)
             debugLog("TRANSCRIBE ok id=\(entryID.uuidString) chars=\(result.cleanedText.count)")
+            // Success only — never surface transient chunk errors on the Live Activity.
+            await markLiveActivitySaved()
+            endTranscribeBackgroundWork(success: true)
         } catch {
             let msg = Self.formatError(error)
             debugLog("TRANSCRIBE fail id=\(entryID.uuidString) \(msg)")
@@ -937,10 +1017,11 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             historyEpoch += 1
             lastError = "Error: \(msg)"
             notifyError()
+            await markLiveActivityFailed("Transcription failed")
+            endTranscribeBackgroundWork(success: false)
         }
 
         isProcessing = false
-        endTranscribeBackgroundWork(success: true)
     }
 
     private func updatePendingProgress(
@@ -963,7 +1044,9 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             transcriptionProgress: progress
         )
         await historyManager.update(entry)
-        // Throttle UI churn: update epoch every ~10%.
+        // Keep Island / Lock Screen in sync (intent stop often runs while backgrounded).
+        await updateLiveActivityTranscribing(progress: progress)
+        // Throttle History list churn: update epoch every ~10%.
         if pct % 10 == 0 {
             historyEpoch += 1
         }
@@ -1055,6 +1138,8 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 }
             )
             await finishTranscription(result, replacing: entry.id, audioFileName: name)
+            await markLiveActivitySaved()
+            endTranscribeBackgroundWork(success: true)
         } catch {
             var failed = entry
             failed.transcriptionState = .failed
@@ -1064,9 +1149,10 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             historyEpoch += 1
             lastError = "Error: \(Self.formatError(error))"
             notifyError()
+            await markLiveActivityFailed("Transcription failed")
+            endTranscribeBackgroundWork(success: false)
         }
         isProcessing = false
-        endTranscribeBackgroundWork(success: true)
     }
 
     /// Import orphaned m4a files that never made it into History.
