@@ -1,4 +1,4 @@
-# Murmur
+# Shrava
 
 A clean-room AI voice dictation app for macOS 14+ and iOS 18+. Speak naturally and get clean, polished text with AI-powered transcription and cleanup.
 
@@ -23,11 +23,11 @@ A clean-room AI voice dictation app for macOS 14+ and iOS 18+. Speak naturally a
 ## Project Structure
 
 ```
-Murmur/
+Shrava/
 ├── project.yml              # XcodeGen project configuration
-├── MurmurCore/              # Shared Swift Package
+├── ShravaCore/              # Shared Swift Package
 │   ├── Package.swift
-│   ├── Sources/MurmurCore/
+│   ├── Sources/ShravaCore/
 │   │   ├── OpenAI/          # API client, transcription service
 │   │   ├── Prompts/         # Cleanup prompt builder
 │   │   ├── Dictionary/      # Personal dictionary
@@ -36,10 +36,10 @@ Murmur/
 │   │   ├── Keychain/        # Secure API key storage
 │   │   ├── Settings/        # App settings
 │   │   └── Sync/            # iCloud sync manager
-│   └── Tests/MurmurCoreTests/
-├── MurmurMac/               # macOS menu bar app
-├── MurmurIOS/               # iOS host app
-├── MurmurKeyboard/          # iOS keyboard extension
+│   └── Tests/ShravaCoreTests/
+├── ShravaMac/               # macOS menu bar app
+├── ShravaIOS/               # iOS host app
+├── ShravaKeyboard/          # iOS keyboard extension
 └── Shared/                  # Shared constants
 ```
 
@@ -57,31 +57,31 @@ Murmur/
 ### Generate Xcode Project
 
 ```bash
-cd Murmur
+cd Shrava
 xcodegen generate
 ```
 
-This creates `Murmur.xcodeproj` from `project.yml`.
+This creates `Shrava.xcodeproj` from `project.yml`.
 
 ### Configure Signing
 
-1. Open `Murmur.xcodeproj` in Xcode
+1. Open `Shrava.xcodeproj` in Xcode
 2. Select each target and configure:
    - **Team**: Select your development team
-   - **Bundle Identifier**: Update if needed (default: `com.murmurapp.*`)
+   - **Bundle Identifier**: Update if needed (default: `com.shrava.*`)
 
 ### App Group Setup (iOS)
 
 The iOS app and keyboard extension share data via an App Group:
 
-1. In Xcode, select the **MurmurIOS** target
+1. In Xcode, select the **ShravaIOS** target
 2. Go to **Signing & Capabilities**
-3. Verify **App Groups** capability with `group.com.murmurapp`
-4. Repeat for **MurmurKeyboard** target
+3. Verify **App Groups** capability with `group.com.shrava`
+4. Repeat for **ShravaKeyboard** target
 
 If using a different App Group identifier, update:
 - `project.yml` entitlements
-- `MurmurCore/Sources/MurmurCore/MurmurCore.swift` (`appGroupIdentifier`)
+- `ShravaCore/Sources/ShravaCore/ShravaCore.swift` (`appGroupIdentifier`)
 - `Shared/SharedConstants.swift`
 
 ### iCloud Setup (Optional)
@@ -90,20 +90,20 @@ For cross-device sync:
 
 1. Enable **iCloud** capability on both iOS and macOS targets
 2. Enable **Key-value storage**
-3. The container identifier is `iCloud.com.murmurapp`
+3. The container identifier is `iCloud.com.shrava`
 
 ### Build and Run
 
 **macOS:**
 ```bash
-# Select MurmurMac scheme
+# Select ShravaMac scheme
 # Build: Cmd+B
 # Run: Cmd+R
 ```
 
 **iOS:**
 ```bash
-# Select MurmurIOS scheme
+# Select ShravaIOS scheme
 # Select your iPhone or simulator
 # Build: Cmd+B
 # Run: Cmd+R
@@ -113,7 +113,7 @@ For cross-device sync:
 
 ### macOS
 
-1. Build and run the **MurmurMac** scheme
+1. Build and run the **ShravaMac** scheme
 2. The app appears in the menu bar (waveform icon)
 3. Complete onboarding:
    - Enter your OpenAI API key
@@ -127,15 +127,15 @@ For cross-device sync:
 
 ### iOS
 
-1. Build and run the **MurmurIOS** scheme on your iPhone
+1. Build and run the **ShravaIOS** scheme on your iPhone
 2. Complete onboarding:
    - Enter your OpenAI API key
    - Grant microphone permission
 3. Install the keyboard extension:
    - Go to **Settings > General > Keyboard > Keyboards**
    - Tap **Add New Keyboard...**
-   - Select **Murmur Keyboard**
-   - Tap **Murmur Keyboard** and enable **Allow Full Access**
+   - Select **Shrava Keyboard**
+   - Tap **Shrava Keyboard** and enable **Allow Full Access**
 
 **Usage (Host App):**
 - Tap and hold the record button to dictate
@@ -143,8 +143,8 @@ For cross-device sync:
 - Copy the result or view history
 
 **Usage (Keyboard):**
-- In any app, switch to **Murmur Keyboard**
-- Tap the **microphone button** to open Murmur for recording
+- In any app, switch to **Shrava Keyboard**
+- Tap the **microphone button** to open Shrava for recording
 - After recording, return to your app
 - The transcribed text is automatically inserted
 
@@ -191,7 +191,7 @@ The AI cleanup pass respects dictionary entries.
 
 ## API Usage & Costs
 
-Murmur uses the OpenAI API. Estimated costs per minute of audio:
+Shrava uses the OpenAI API. Estimated costs per minute of audio:
 
 | Model | Cost |
 |-------|------|
@@ -205,7 +205,7 @@ Total: approximately **$0.01 per minute** of dictation.
 ### Unit Tests
 
 ```bash
-cd MurmurCore
+cd ShravaCore
 swift test
 ```
 
@@ -222,7 +222,7 @@ Note: Full tests require macOS with Swift toolchain. Core package tests can also
 
 ### "Microphone permission not granted"
 - macOS: System Preferences > Privacy & Security > Microphone
-- iOS: Settings > Murmur > Microphone
+- iOS: Settings > Shrava > Microphone
 
 ### "Invalid API key"
 - Verify your OpenAI API key at platform.openai.com
@@ -239,7 +239,7 @@ Note: Full tests require macOS with Swift toolchain. Core package tests can also
 
 ## Architecture
 
-### MurmurCore (Swift Package)
+### ShravaCore (Swift Package)
 
 Platform-agnostic core logic:
 - `OpenAIClient`: Handles transcription and chat completion API calls
@@ -280,6 +280,6 @@ Platform-agnostic core logic:
 
 ## License
 
-Copyright © 2024 Murmur. All rights reserved.
+Copyright © 2024 Shrava. All rights reserved.
 
 This is a clean-room implementation. No code, assets, prompts, or branding from other voice dictation apps.

@@ -1,6 +1,6 @@
-name: Murmur
+name: Shrava
 options:
-  bundleIdPrefix: com.murmurapp
+  bundleIdPrefix: com.shrava
   deploymentTarget:
     macOS: "14.0"
     iOS: "18.0"
@@ -17,30 +17,30 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
 
 packages:
-  MurmurCore:
-    path: ./MurmurCore
+  ShravaCore:
+    path: ./ShravaCore
 
 targets:
-  MurmurMac:
+  ShravaMac:
     type: application
     platform: macOS
     deploymentTarget: "14.0"
     sources:
-      - path: MurmurMac/Sources
+      - path: ShravaMac/Sources
       - path: Shared
-      - path: MurmurMac/Resources/Assets.xcassets
+      - path: ShravaMac/Resources/Assets.xcassets
     dependencies:
-      - package: MurmurCore
+      - package: ShravaCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.mac
-        INFOPLIST_FILE: MurmurMac/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: MurmurMac/Resources/MurmurMac.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.shrava.mac
+        INFOPLIST_FILE: ShravaMac/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShravaMac/Resources/ShravaMac.entitlements
         LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         COMBINE_HIDPI_IMAGES: YES
     info:
-      path: MurmurMac/Resources/Info.plist
+      path: ShravaMac/Resources/Info.plist
       properties:
         CFBundleName: Shrava
         CFBundleDisplayName: Shrava
@@ -54,7 +54,7 @@ targets:
         NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
         NSAppleEventsUsageDescription: "Shrava needs accessibility access to insert text into other applications."
     entitlements:
-      path: MurmurMac/Resources/MurmurMac.entitlements
+      path: ShravaMac/Resources/ShravaMac.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.device.audio-input: true
@@ -62,37 +62,37 @@ targets:
         com.apple.security.temporary-exception.apple-events:
           - com.apple.systemevents
         com.apple.security.personal-information.addressbook: false
-        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.murmurapp
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.shrava
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.murmurapp
+          - iCloud.com.shrava
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.murmurapp
+          - $(AppIdentifierPrefix)com.shrava
 
-  MurmurIOS:
+  ShravaIOS:
     type: application
     platform: iOS
     deploymentTarget: "18.0"
     sources:
-      - path: MurmurIOS/Sources
+      - path: ShravaIOS/Sources
       - path: Shared
-      - path: MurmurIOS/Resources/Assets.xcassets
-      - path: MurmurIOS/Resources/LaunchScreen.storyboard
+      - path: ShravaIOS/Resources/Assets.xcassets
+      - path: ShravaIOS/Resources/LaunchScreen.storyboard
     dependencies:
-      - package: MurmurCore
-      - target: MurmurKeyboard
+      - package: ShravaCore
+      - target: ShravaKeyboard
         embed: true
       - framework: Vendor/whisper.xcframework
         embed: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.ios
-        INFOPLIST_FILE: MurmurIOS/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: MurmurIOS/Resources/MurmurIOS.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.shrava.ios
+        INFOPLIST_FILE: ShravaIOS/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShravaIOS/Resources/ShravaIOS.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CLANG_CXX_LANGUAGE_STANDARD: c++17
         OTHER_LDFLAGS: "$(inherited) -lc++"
     info:
-      path: MurmurIOS/Resources/Info.plist
+      path: ShravaIOS/Resources/Info.plist
       properties:
         CFBundleName: Shrava
         CFBundleDisplayName: Shrava
@@ -116,41 +116,41 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
         CFBundleURLTypes:
-          - CFBundleURLName: com.murmurapp.ios
+          - CFBundleURLName: com.shrava.ios
             CFBundleURLSchemes:
-              - murmur
+              - shrava
     entitlements:
-      path: MurmurIOS/Resources/MurmurIOS.entitlements
+      path: ShravaIOS/Resources/ShravaIOS.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.murmurapp
-        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.murmurapp
+          - group.com.shrava
+        com.apple.developer.ubiquity-kvstore-identifier: $(TeamIdentifierPrefix)com.shrava
         com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.murmurapp
+          - iCloud.com.shrava
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.murmurapp
+          - $(AppIdentifierPrefix)com.shrava
 
-  MurmurKeyboard:
+  ShravaKeyboard:
     type: app-extension
     platform: iOS
     deploymentTarget: "18.0"
     sources:
-      - path: MurmurKeyboard/Sources
+      - path: ShravaKeyboard/Sources
       - path: Shared
     dependencies:
-      - package: MurmurCore
+      - package: ShravaCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.murmurapp.ios.keyboard
-        INFOPLIST_FILE: MurmurKeyboard/Resources/Info.plist
-        CODE_SIGN_ENTITLEMENTS: MurmurKeyboard/Resources/MurmurKeyboard.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: com.shrava.ios.keyboard
+        INFOPLIST_FILE: ShravaKeyboard/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShravaKeyboard/Resources/ShravaKeyboard.entitlements
         SKIP_INSTALL: NO
         LD_RUNPATH_SEARCH_PATHS:
           - $(inherited)
           - "@executable_path/Frameworks"
           - "@executable_path/../../Frameworks"
     info:
-      path: MurmurKeyboard/Resources/Info.plist
+      path: ShravaKeyboard/Resources/Info.plist
       properties:
         CFBundleName: Shrava Keyboard
         CFBundleDisplayName: Shrava Keyboard
@@ -168,18 +168,18 @@ targets:
             PrimaryLanguage: en-US
             RequestsOpenAccess: true
     entitlements:
-      path: MurmurKeyboard/Resources/MurmurKeyboard.entitlements
+      path: ShravaKeyboard/Resources/ShravaKeyboard.entitlements
       properties:
         com.apple.security.application-groups:
-          - group.com.murmurapp
+          - group.com.shrava
         keychain-access-groups:
-          - $(AppIdentifierPrefix)com.murmurapp
+          - $(AppIdentifierPrefix)com.shrava
 
 schemes:
-  MurmurMac:
+  ShravaMac:
     build:
       targets:
-        MurmurMac: all
+        ShravaMac: all
     run:
       config: Debug
     test:
@@ -191,11 +191,11 @@ schemes:
     archive:
       config: Release
 
-  MurmurIOS:
+  ShravaIOS:
     build:
       targets:
-        MurmurIOS: all
-        MurmurKeyboard: all
+        ShravaIOS: all
+        ShravaKeyboard: all
     run:
       config: Debug
     test:
