@@ -4,6 +4,15 @@
 
 Local-first voice dictation and meeting capture for **macOS** and **iPhone**. Hold a key (or tap Record), speak naturally, and get clean on-device transcripts — with optional Meeting Brief insights when you ask for them.
 
+## Download
+
+| Platform | Download |
+|---|---|
+| **macOS** (Apple silicon, macOS 14+) | [**Download Shrava.dmg**](https://github.com/nitinkanish/shrava-ai/raw/main/dist/Shrava.dmg) |
+| **iPhone** (iOS 26+) | Not on the App Store. Install from source with Xcode and a free Apple ID; see [iPhone (free Apple ID)](#iphone-free-apple-id). |
+
+> The Mac app is ad-hoc signed. On first open, right-click Shrava.app > **Open**, or run `xattr -dr com.apple.quarantine ~/Applications/Shrava.app`.
+
 ## Highlights
 
 | Desktop (macOS 14+) | Mobile (iOS 18+) |
