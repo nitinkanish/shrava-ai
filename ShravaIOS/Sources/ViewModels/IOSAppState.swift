@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import ActivityKit
+import WidgetKit
 import ShravaCore
 
 @MainActor
@@ -72,13 +73,177 @@ final class IOSAppState: ObservableObject {
 
     private func observeStopIntent() {
         stopObserver = NotificationCenter.default.addObserver(
-            forName: .shravaStopLongRecording,
+            forName: .shravaRecordingIntent,
             object: nil,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            let raw = note.userInfo?["action"] as? String ?? ""
             Task { @MainActor in
-                await self?.stopLongRecordingAndTranscribe()
+                await self?.handleRecordingIntent(raw)
             }
+        }
+        // Cold-start: intent may have posted before we registered — drain pending Live Activities sync.
+        reloadRecordingControl()
+    }
+
+    private func handleRecordingIntent(_ raw: String) async {
+        switch raw {
+        case RecordingIntentAction.start.rawValue:
+            await startLongRecordingFromIntent()
+        case RecordingIntentAction.stop.rawValue:
+            await stopLongRecordingFromIntent()
+        case RecordingIntentAction.toggle.rawValue:
+            if isRecording && isLongRecording {
+                await stopLongRecordingFromIntent()
+            } else {
+                await startLongRecordingFromIntent()
+            }
+        default:
+            RecordingIntentBridge.settle(reason: "unknown")
+        }
+    }
+
+    /// Intent/Control path: Live Activity first, then recorder, then settle (keeps AudioRecordingIntent grant open).
+    func startLongRecordingFromIntent(title: String = "Meeting") async {
+        if isRecording && isLongRecording {
+            RecordingIntentBridge.settle(reason: "ok")
+            return
+        }
+        guard !isRecording else {
+            RecordingIntentBridge.settle(reason: "busy")
+            return
+        }
+
+        // Live Activities must be enabled — required by AudioRecordingIntent.
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            RecordingIntentBridge.settle(reason: "liveActivity")
+            return
+        }
+
+        if !hasMicrophonePermission {
+            // Can't prompt from background.
+            RecordingIntentBridge.settle(reason: "permission")
+            return
+        }
+        refreshModelStatus()
+        guard modelReady else {
+            RecordingIntentBridge.settle(reason: "model")
+            return
+        }
+
+        isRecording = true
+        isLongRecording = true
+        isPaused = false
+        recordingDuration = 0
+        accumulatedPause = 0
+        recordingStartedAt = Date()
+        pauseStartedAt = nil
+        lastError = nil
+        showingResult = false
+        transcriptionProgress = 0
+        audioLevel = 0
+        waveformSamples = Array(repeating: 0.08, count: 32)
+
+        // 1) Live Activity FIRST (AudioRecordingIntent contract).
+        let laOK = await startLiveActivity(title: title)
+        guard laOK else {
+            isRecording = false
+            isLongRecording = false
+            RecordingIntentBridge.settle(reason: "liveActivity")
+            return
+        }
+
+        // 2) Start recorder while intent perform() is still waiting.
+        audioRecorder = IOSAudioRecorder()
+        do {
+            try await audioRecorder?.startRecording(mode: .long)
+            guard audioRecorder?.isRecording == true else {
+                throw RecordingError.failedToStart(NSError(domain: "Shrava", code: -3, userInfo: [
+                    NSLocalizedDescriptionKey: "Recorder did not start"
+                ]))
+            }
+            UIApplication.shared.isIdleTimerDisabled = true
+            startRecordingTimer()
+            reloadRecordingControl()
+            RecordingIntentBridge.settle(reason: "ok")
+            haptic(.medium)
+        } catch {
+            audioRecorder?.cancelRecording()
+            audioRecorder = nil
+            await endLiveActivity()
+            isRecording = false
+            isLongRecording = false
+            UIApplication.shared.isIdleTimerDisabled = false
+            lastError = "Failed to start recording: \(error.localizedDescription)"
+            RecordingIntentBridge.settle(reason: "failed")
+        }
+    }
+
+    func stopLongRecordingFromIntent() async {
+        guard isRecording, isLongRecording else {
+            RecordingIntentBridge.settle(reason: "ok")
+            return
+        }
+        // Keep process alive for transcription after intent returns.
+        var bgTask = UIBackgroundTaskIdentifier.invalid
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "ShravaTranscribe") {
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
+
+        stopRecordingTimer()
+        isRecording = false
+        isPaused = false
+        let duration = recordingDuration
+        isProcessing = true
+        transcriptionProgress = 0
+        audioLevel = 0
+        UIApplication.shared.isIdleTimerDisabled = false
+
+        let url = audioRecorder?.stopLongRecording()
+        // End Live Activity BEFORE deactivating session (AudioRecordingIntent contract).
+        await endLiveActivity()
+        audioRecorder?.deactivateAfterStop()
+        audioRecorder = nil
+        reloadRecordingControl()
+        RecordingIntentBridge.settle(reason: "ok")
+
+        defer {
+            isProcessing = false
+            isLongRecording = false
+            if bgTask != .invalid {
+                UIApplication.shared.endBackgroundTask(bgTask)
+                bgTask = .invalid
+            }
+        }
+
+        guard let url else {
+            lastError = "No audio file recorded"
+            return
+        }
+
+        do {
+            let result = try await IOSWhisper.shared.transcribeFile(
+                url: url,
+                durationSeconds: duration,
+                language: SettingsManager.shared.settings.language,
+                dictionary: dictionary,
+                progress: { [weak self] p in
+                    self?.transcriptionProgress = p
+                }
+            )
+            await finishTranscription(result)
+        } catch {
+            lastError = "Error: \(error.localizedDescription)"
+            notifyError()
+        }
+    }
+
+    private func reloadRecordingControl() {
+        if #available(iOS 18.0, *) {
+            ControlCenter.shared.reloadControls(ofKind: ShravaControlKind.recording)
         }
     }
 
@@ -87,7 +252,8 @@ final class IOSAppState: ObservableObject {
         modelReady = modelManager.isReady
     }
 
-    /// Keyboard / Quick capture / `shrava://record` → long meeting recording.
+    /// Keyboard / in-app URL (`shrava://record`) when the app is opened.
+    /// Action Button / Control Center / Siri use `StartRecordingIntent` (no UI).
     func startRecordingFromKeyboard() {
         launchedFromKeyboard = true
         currentTab = .record
@@ -153,17 +319,25 @@ final class IOSAppState: ObservableObject {
         audioLevel = 0
         waveformSamples = Array(repeating: 0.08, count: 32)
 
+        // Live Activity before recorder (same contract as AudioRecordingIntent).
+        let laOK = await startLiveActivity(title: title)
+        if !laOK {
+            // Still allow in-app recording if Live Activities are off — warn but continue.
+            lastError = "Live Activities are off — enable them for Dynamic Island + shortcuts."
+        }
+
         audioRecorder = IOSAudioRecorder()
         do {
             try await audioRecorder?.startRecording(mode: .long)
             UIApplication.shared.isIdleTimerDisabled = true
             startRecordingTimer()
-            await startLiveActivity(title: title)
+            reloadRecordingControl()
             haptic(.medium)
         } catch {
             isRecording = false
             isLongRecording = false
             UIApplication.shared.isIdleTimerDisabled = false
+            await endLiveActivity()
             lastError = "Failed to start recording: \(error.localizedDescription)"
         }
     }
@@ -254,8 +428,10 @@ final class IOSAppState: ObservableObject {
         haptic(.light)
 
         let url = audioRecorder?.stopLongRecording()
-        audioRecorder = nil
         await endLiveActivity()
+        audioRecorder?.deactivateAfterStop()
+        audioRecorder = nil
+        reloadRecordingControl()
 
         defer { isProcessing = false; isLongRecording = false }
 
@@ -295,13 +471,15 @@ final class IOSAppState: ObservableObject {
         if isLongRecording {
             isLongRecording = false
             await endLiveActivity()
+            reloadRecordingControl()
         }
     }
 
     // MARK: - Live Activity
 
-    private func startLiveActivity(title: String) async {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+    @discardableResult
+    private func startLiveActivity(title: String) async -> Bool {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return false }
         let attributes = RecordingActivityAttributes(title: title)
         let state = RecordingActivityAttributes.ContentState(timerStart: Date(), isPaused: false, frozenElapsed: 0)
         do {
@@ -310,8 +488,10 @@ final class IOSAppState: ObservableObject {
                 content: .init(state: state, staleDate: nil),
                 pushType: nil
             )
+            return liveActivity != nil
         } catch {
             print("Live Activity start failed: \(error)")
+            return false
         }
     }
 

@@ -30,7 +30,7 @@ targets:
       - path: Shared
         excludes:
           - RecordingActivityAttributes.swift
-          - StopRecordingIntent.swift
+          - RecordingIntents.swift
       - path: ShravaMac/Resources/Assets.xcassets
     dependencies:
       - package: ShravaCore
@@ -150,7 +150,7 @@ targets:
       - path: Shared
         excludes:
           - RecordingActivityAttributes.swift
-          - StopRecordingIntent.swift
+          - RecordingIntents.swift
     dependencies:
       - package: ShravaCore
     settings:

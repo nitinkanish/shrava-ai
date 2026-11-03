@@ -24,6 +24,7 @@
 		57D3B4BE587D9C2E998071F7 /* whisper.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 735CBD9B5E81026213099EA5 /* whisper.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		5A6D4C9C68E5D0F6D426A3A1 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF017EF7D0BBEA77E1A434B5 /* AudioRecorder.swift */; };
 		5C2E7DADE46E8A3817A3305E /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */; };
+		623C18FA56195207861B8AC0 /* RecordingIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */; };
 		62D0041485293768F14FC2D1 /* whisper.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 735CBD9B5E81026213099EA5 /* whisper.xcframework */; };
 		694D377DB3D4665F3375610F /* IOSWhisper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3909760704A6D570292BCA87 /* IOSWhisper.swift */; };
 		69818C9CB73A8F303AECD29C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 754DC7DD0A8CFD1C29771ED6 /* Assets.xcassets */; };
@@ -31,8 +32,9 @@
 		7071D460E85009D28E16661A /* ShravaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F2FEB9416509733BCAB1B8C /* ShravaCore */; };
 		730241A94B5ADC70EB8C32B0 /* IOSHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06E318AE736602BAED7E81E6 /* IOSHistoryView.swift */; };
 		8080A3C222C4549B15955ADB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A6DA98773BDB3BC6D07FC12F /* LaunchScreen.storyboard */; };
+		80CDCB6096935A448BE446EB /* ShravaRecordingControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124CFDEBB74FAFC2D524A701 /* ShravaRecordingControl.swift */; };
 		81BD9D73A96D4583F7646C31 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFD45B8B0E4B9DA6D3E7DD50 /* MenuBarView.swift */; };
-		9000F61FA0A87962CBC52A44 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5105095D296B25381468874E /* StopRecordingIntent.swift */; };
+		87A7A8C09A1E83478E260FDF /* ShravaShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7111A0D457BF0009F60CF7B /* ShravaShortcuts.swift */; };
 		91592E96CC1E39B478E97137 /* HistoryWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16FCFA0DA309680A4D893307 /* HistoryWindowController.swift */; };
 		9CF49842D1428A9A81B39DA1 /* ShravaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 314978CDEE62D8416CF8D252 /* ShravaCore */; };
 		A0A61DF2848A9D5FE47ACAC3 /* KeyboardViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20EE82050F58842718D41E41 /* KeyboardViewController.swift */; };
@@ -42,11 +44,11 @@
 		BA9DEBF3C47BBBD6AC9C83FA /* OnboardingWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA98AD17D3130348C3017030 /* OnboardingWindowController.swift */; };
 		BDA7986E3CE18CF55AD0C133 /* IOSDictionaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BE064945514FA83E3E4EE17 /* IOSDictionaryView.swift */; };
 		C052604D0EEE4EAEF0E7454A /* FloatingIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C66053F0D038A004FF6E9560 /* FloatingIndicator.swift */; };
-		C8EAA50D6AAEFC74851C590C /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5105095D296B25381468874E /* StopRecordingIntent.swift */; };
 		CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */; };
 		CC42A8CF0809B7E533D8D7A2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */; };
 		CC850739A352435E5E4F1044 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */; };
 		D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */; };
+		DCA16B7D2F27CD267D0AA239 /* RecordingIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */; };
 		DFD648EA6A03F88FA6F7F47C /* ShravaTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2158C262EA7175DB24133D6 /* ShravaTheme.swift */; };
 		EAF6DA7848F8701302333D01 /* ShravaMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5422ACDEAB3927E81D16B33 /* ShravaMacApp.swift */; };
 		EB4F27D3E21B9B5CAD85D945 /* IOSOnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 722D86D86475E8DA29B1DCAF /* IOSOnboardingView.swift */; };
@@ -103,6 +105,7 @@
 /* Begin PBXFileReference section */
 		06E318AE736602BAED7E81E6 /* IOSHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSHistoryView.swift; sourceTree = "<group>"; };
 		0BE064945514FA83E3E4EE17 /* IOSDictionaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDictionaryView.swift; sourceTree = "<group>"; };
+		124CFDEBB74FAFC2D524A701 /* ShravaRecordingControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaRecordingControl.swift; sourceTree = "<group>"; };
 		13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityAttributes.swift; sourceTree = "<group>"; };
 		16FCFA0DA309680A4D893307 /* HistoryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryWindowController.swift; sourceTree = "<group>"; };
 		20EE82050F58842718D41E41 /* KeyboardViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardViewController.swift; sourceTree = "<group>"; };
@@ -111,7 +114,6 @@
 		35F96A8103D595B017AF80B3 /* WhisperModelManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperModelManager.swift; sourceTree = "<group>"; };
 		3909760704A6D570292BCA87 /* IOSWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSWhisper.swift; sourceTree = "<group>"; };
 		44E7D9A1A1C8AA3C4E442710 /* ShravaIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = ShravaIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		5105095D296B25381468874E /* StopRecordingIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StopRecordingIntent.swift; sourceTree = "<group>"; };
 		5108DA1302B75F9951E0EC8A /* IOSSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSettingsView.swift; sourceTree = "<group>"; };
 		61EFD31BBEF288C4F9460970 /* ShravaKeyboard.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShravaKeyboard.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		665E1207B9086FBA20F5FA4D /* ShravaLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShravaLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -131,6 +133,8 @@
 		AAB1E0377A1DAF0068C590DC /* LocalWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisper.swift; sourceTree = "<group>"; };
 		ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSAppState.swift; sourceTree = "<group>"; };
 		B2158C262EA7175DB24133D6 /* ShravaTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaTheme.swift; sourceTree = "<group>"; };
+		B7111A0D457BF0009F60CF7B /* ShravaShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaShortcuts.swift; sourceTree = "<group>"; };
+		BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingIntents.swift; sourceTree = "<group>"; };
 		BD3DE7136B9BBE91C77E012B /* DictionaryWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictionaryWindowController.swift; sourceTree = "<group>"; };
 		BFD45B8B0E4B9DA6D3E7DD50 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
 		C66053F0D038A004FF6E9560 /* FloatingIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingIndicator.swift; sourceTree = "<group>"; };
@@ -186,8 +190,8 @@
 			isa = PBXGroup;
 			children = (
 				13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */,
+				BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */,
 				DA26FFE18C84951DB6EF8600 /* SharedConstants.swift */,
-				5105095D296B25381468874E /* StopRecordingIntent.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -212,6 +216,7 @@
 			isa = PBXGroup;
 			children = (
 				841CE35E7B495476A9A2E6D7 /* ShravaLiveActivityBundle.swift */,
+				124CFDEBB74FAFC2D524A701 /* ShravaRecordingControl.swift */,
 				84CB0C3F8FC9B152135763D1 /* ShravaRecordingLiveActivity.swift */,
 			);
 			path = Sources;
@@ -401,6 +406,7 @@
 			isa = PBXGroup;
 			children = (
 				6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */,
+				B7111A0D457BF0009F60CF7B /* ShravaShortcuts.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -634,11 +640,12 @@
 				349DE7BBDC8AD6A480614539 /* IOSSettingsView.swift in Sources */,
 				694D377DB3D4665F3375610F /* IOSWhisper.swift in Sources */,
 				D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */,
+				623C18FA56195207861B8AC0 /* RecordingIntents.swift in Sources */,
 				F937C5AE05713B1F2FD6C592 /* RecordingView.swift in Sources */,
 				116267B0773B7B3C9818F21F /* SharedConstants.swift in Sources */,
 				CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */,
+				87A7A8C09A1E83478E260FDF /* ShravaShortcuts.swift in Sources */,
 				DFD648EA6A03F88FA6F7F47C /* ShravaTheme.swift in Sources */,
-				C8EAA50D6AAEFC74851C590C /* StopRecordingIntent.swift in Sources */,
 				A565641BA4BFB249E7A07C76 /* WhisperModelManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -657,10 +664,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				5C2E7DADE46E8A3817A3305E /* RecordingActivityAttributes.swift in Sources */,
+				DCA16B7D2F27CD267D0AA239 /* RecordingIntents.swift in Sources */,
 				6D273DF1CBD7413BABE65FD2 /* SharedConstants.swift in Sources */,
 				F202A29A907022CC54B770C6 /* ShravaLiveActivityBundle.swift in Sources */,
+				80CDCB6096935A448BE446EB /* ShravaRecordingControl.swift in Sources */,
 				46EEC5C3B6BA26D3BDBF3AAF /* ShravaRecordingLiveActivity.swift in Sources */,
-				9000F61FA0A87962CBC52A44 /* StopRecordingIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

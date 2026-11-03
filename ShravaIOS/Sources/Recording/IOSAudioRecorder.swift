@@ -103,11 +103,16 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
         }
     }
 
+    private func deactivateSession() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
     /// Stops and returns in-memory data (quick mode). Deletes temp file.
     func stopRecording() -> Data? {
         audioRecorder?.stop()
         audioRecorder = nil
         removeSessionObservers()
+        deactivateSession()
 
         guard let url = recordingURL else { return nil }
         defer {
@@ -124,9 +129,15 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
         audioRecorder?.stop()
         audioRecorder = nil
         removeSessionObservers()
+        // Keep session active briefly until Live Activity ends — caller deactivates via deactivateAfterStop.
         let url = recordingURL
         recordingURL = nil
         return url
+    }
+
+    /// Call after Live Activity has ended so AudioRecordingIntent contract is satisfied.
+    func deactivateAfterStop() {
+        deactivateSession()
     }
 
     func cancelRecording() {
@@ -137,6 +148,7 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
             try? FileManager.default.removeItem(at: url)
             recordingURL = nil
         }
+        deactivateSession()
     }
 
     // MARK: - Session
