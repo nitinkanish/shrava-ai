@@ -8,6 +8,8 @@ struct MeetingBriefSheet: View {
     @Binding var brief: MeetingBrief?
     var onReanalyze: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var showSlackSheet = false
+    @State private var slackToast: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,6 +19,7 @@ struct MeetingBriefSheet: View {
                 Spacer()
                 if brief != nil {
                     Button("Re-analyze", action: onReanalyze)
+                    Button("Send to Slack") { showSlackSheet = true }
                     Button("Copy Markdown") { copyMarkdown() }
                     Button("Export…") { exportMarkdown() }
                 }
@@ -40,6 +43,29 @@ struct MeetingBriefSheet: View {
             }
         }
         .frame(minWidth: 560, minHeight: 480)
+        .overlay(alignment: .bottom) {
+            if let slackToast {
+                Text(slackToast)
+                    .font(.caption)
+                    .padding(10)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.bottom, 12)
+            }
+        }
+        .sheet(isPresented: $showSlackSheet) {
+            if let brief {
+                SendBriefToSlackSheet(
+                    brief: brief,
+                    entry: entry,
+                    title: meetingTitle
+                )
+            }
+        }
+    }
+
+    private var meetingTitle: String {
+        let words = entry.cleanedText.split(whereSeparator: \.isWhitespace).prefix(8).joined(separator: " ")
+        return words.isEmpty ? brief?.meetingType.displayName ?? "Meeting Brief" : words
     }
 
     private func toggleAction(_ item: MeetingActionItem) {

@@ -343,10 +343,31 @@ struct HistoryCard: View {
             )
             try await BriefStore.shared.save(result, for: entry.id)
             brief = result
+            await autoSendToSlackIfNeeded(result)
         } catch {
             analyzeError = error.localizedDescription
             // Keep sheet open only if we already had a brief; otherwise dismiss empty loading sheet
             if brief == nil { showBrief = false }
+        }
+    }
+
+    private func autoSendToSlackIfNeeded(_ brief: MeetingBrief) async {
+        let s = SlackSettingsStore.load()
+        guard s.autoSendAfterAnalyze, SlackSecrets.hasToken(), let channel = s.defaultChannelID, !channel.isEmpty else { return }
+        let titleWords = entry.cleanedText.split(whereSeparator: \.isWhitespace).prefix(8).joined(separator: " ")
+        do {
+            _ = try await SlackClient.shared.postMeetingBrief(
+                brief: brief,
+                channelID: channel,
+                channelName: s.defaultChannelName,
+                title: titleWords.isEmpty ? brief.meetingType.displayName : titleWords,
+                date: entry.timestamp,
+                durationSeconds: entry.durationSeconds,
+                transcript: entry.cleanedText,
+                includeTranscript: s.includeTranscript
+            )
+        } catch {
+            analyzeError = "Slack auto-send failed: \(error.localizedDescription)"
         }
     }
 }

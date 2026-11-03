@@ -109,10 +109,15 @@ struct IOSSettingsView: View {
             } label: {
                 Label("Meeting Brief (Ollama)", systemImage: "sparkles")
             }
+            NavigationLink {
+                IOSSlackSettingsView()
+            } label: {
+                Label("Slack", systemImage: "number.square")
+            }
         } header: {
-            Text("Analysis")
+            Text("Analysis & integrations")
         } footer: {
-            Text("Analyze transcripts into a meeting brief with action items via Ollama Cloud or a local server.")
+            Text("Analyze transcripts into a meeting brief, then optionally send them to a Slack channel.")
         }
     }
 

@@ -12,6 +12,7 @@ struct SettingsView: View {
             IndicatorSettingsView().tabItem { Label("Indicator", systemImage: "waveform.circle") }.tag(1)
             APISettingsView().tabItem { Label("Model", systemImage: "cpu") }.tag(2)
             AnalysisSettingsView().tabItem { Label("Meeting Brief", systemImage: "sparkles") }.tag(8)
+            SlackSettingsView().tabItem { Label("Slack", systemImage: "number.square") }.tag(9)
             HotkeySettingsView().tabItem { Label("Hotkey", systemImage: "keyboard") }.tag(3)
             PermissionsSettingsView().tabItem { Label("Permissions", systemImage: "lock.shield") }.tag(4)
             DataSettingsView().environmentObject(appState).tabItem { Label("Data", systemImage: "chart.bar") }.tag(5)

@@ -21,7 +21,7 @@ Local-first voice dictation and meeting capture for **macOS** and **iPhone**. Ho
 | Double-tap Fn for **hands-free**; tap again to stop | Long **background** meeting recording |
 | Local Whisper via **whisper-cli** (`large-v3-turbo`) | On-device Whisper **base** (`ggml-base-q5_1`) |
 | Draggable creative recording indicator + menu-bar logo | Compact **Dynamic Island** / Live Activity with **Stop** |
-| **Meeting Brief** via Ollama (`gpt-oss:120b-cloud`) | Action Button / Siri / Control Center start **without opening the app** |
+| **Meeting Brief** via Ollama + **Send to Slack** | Action Button / Siri / Control Center start **without opening the app** |
 | History, dictionary, settings tabs | Keyboard extension, history, dictionary, meeting brief |
 | Ad-hoc **DMG** for local install | Copy / Share transcript as `.md` |
 
@@ -44,6 +44,7 @@ Menu-bar app: hold your hotkey, speak, release — polished text is typed into t
 - **Hands-free mode**: double-tap the hotkey to start, tap again to stop
 - **Local Whisper** through Homebrew `whisper-cli` / whisper.cpp — prefers `ggml-large-v3-turbo` in Application Support
 - **Meeting Brief**: send a transcript to **Ollama** (`gpt-oss:120b-cloud`, with non-cloud fallback) for insights and action items — API key stored in **Keychain**
+- **Slack**: post briefs to a channel you pick (Block Kit), optional transcript thread — bot token in **Keychain**
 - Searchable **history**, personal **dictionary**, and Settings tabs (General, Hotkey, Model, Permissions, Meeting Brief, …)
 - Distribute as a local **DMG** (`dist/Shrava.dmg`) for ad-hoc install into `~/Applications`
 
@@ -82,7 +83,7 @@ iPhone app with Liquid Glass chrome, long-form meeting capture, and Shortcuts th
   - *Start Shrava Recording* / *Stop* / *Toggle* for **Action Button**, **Back Tap**, **Shortcuts**, and **Siri**
   - **Control Center** control (`Shrava Recording`) toggles recording without launching UI
 - On-device **Whisper base** model (download once in Settings) — no OpenAI key
-- **Meeting Brief** (Ollama) with insights / action items; **Copy** and **Share as `.md`**
+- **Meeting Brief** (Ollama) with insights / action items; **Send to Slack**, **Copy**, and **Share as `.md`**
 - **Shrava Keyboard** for quick capture from other apps (Full Access recommended when App Groups are available)
 
 ### Action Button (start without opening the app)
@@ -100,6 +101,39 @@ iPhone app with Liquid Glass chrome, long-form meeting capture, and Shortcuts th
 > **Note (free Apple ID):** personal-team builds expire about every **7 days** and must be reinstalled from Xcode. App Groups / iCloud may be unavailable on free signing, so keyboard ↔ app sharing can be limited.
 
 ---
+
+
+---
+
+## Slack integration
+
+Send a **Meeting Brief** to any Slack channel from Mac or iPhone.
+
+### 1. Create the Slack app
+
+1. Open [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From an app manifest**.
+2. Paste the contents of [`docs/slack-app-manifest.yml`](docs/slack-app-manifest.yml) (bot scopes: `chat:write`, `channels:read`, `groups:read`, `channels:join`, optional `chat:write.public`).
+3. **Install to Workspace** and copy the **Bot User OAuth Token** (`xoxb-…`).
+4. For **private** channels, invite the bot in Slack: `/invite @Shrava`.
+
+### 2. Connect in Shrava
+
+| Platform | Where |
+|---|---|
+| **Mac** | Settings → **Slack** — paste token → **Connect / Test** → pick default channel |
+| **iPhone** | Settings → **Slack** — same flow |
+
+Toggles:
+
+- **Auto-send brief after Analyze** (off by default) — posts to the default channel when analysis finishes
+- **Include transcript** — posts the full transcript as a threaded reply (chunked)
+
+### 3. Send a brief
+
+Open a Meeting Brief → **Send to Slack** → searchable channel picker (defaults to your saved channel) → success link **Open in Slack**.
+
+Tokens are stored in the **Keychain** (`com.shrava` / `slack_bot_token`) — never commit them.
+
 
 ## Privacy
 
@@ -160,6 +194,7 @@ Shrava/
 ├── ShravaLiveActivity/         # Live Activity + Control Center widget
 ├── Shared/                     # Recording intents, activity attributes, constants
 ├── docs/screenshots/           # README screenshots (committed)
+├── docs/slack-app-manifest.yml # Slack app manifest for Meeting Brief posts
 └── dist/                       # Local DMG / preview dumps (not all committed)
 ```
 

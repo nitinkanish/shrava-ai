@@ -31,6 +31,7 @@
 		6D273DF1CBD7413BABE65FD2 /* SharedConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA26FFE18C84951DB6EF8600 /* SharedConstants.swift */; };
 		7071D460E85009D28E16661A /* ShravaCore in Frameworks */ = {isa = PBXBuildFile; productRef = 5F2FEB9416509733BCAB1B8C /* ShravaCore */; };
 		730241A94B5ADC70EB8C32B0 /* IOSHistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06E318AE736602BAED7E81E6 /* IOSHistoryView.swift */; };
+		734FD3BF22B9ADF844F66FFE /* IOSSlackViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A793AA8EEA4F1E22F0178754 /* IOSSlackViews.swift */; };
 		8080A3C222C4549B15955ADB /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A6DA98773BDB3BC6D07FC12F /* LaunchScreen.storyboard */; };
 		80CDCB6096935A448BE446EB /* ShravaRecordingControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124CFDEBB74FAFC2D524A701 /* ShravaRecordingControl.swift */; };
 		81BD9D73A96D4583F7646C31 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFD45B8B0E4B9DA6D3E7DD50 /* MenuBarView.swift */; };
@@ -47,6 +48,7 @@
 		CB09C65C144F67D624BFA002 /* ShravaIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */; };
 		CC42A8CF0809B7E533D8D7A2 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */; };
 		CC850739A352435E5E4F1044 /* IOSAppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF66CF6B2DD61FA2F78B3B7 /* IOSAppState.swift */; };
+		CE75BB9795E9AF1803482CAB /* SlackIntegrationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E800DA9E139356E75DE53C2 /* SlackIntegrationViews.swift */; };
 		D55BEB0485C342CEFF142C8C /* PhoneCallMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4FC584115390C87BA8655DD /* PhoneCallMonitor.swift */; };
 		D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13FF29F984F12AA12DBCA6C3 /* RecordingActivityAttributes.swift */; };
 		DCA16B7D2F27CD267D0AA239 /* RecordingIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC52F1A8016D7E5CA3546699 /* RecordingIntents.swift */; };
@@ -120,6 +122,7 @@
 		665E1207B9086FBA20F5FA4D /* ShravaLiveActivity.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = ShravaLiveActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		69293F9A286A11BCF7AF399E /* HotkeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyManager.swift; sourceTree = "<group>"; };
 		6C529B7C3AD90CC41A9573A6 /* ShravaIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShravaIOSApp.swift; sourceTree = "<group>"; };
+		6E800DA9E139356E75DE53C2 /* SlackIntegrationViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlackIntegrationViews.swift; sourceTree = "<group>"; };
 		702A2977C8FADCCC569FACAB /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		722D86D86475E8DA29B1DCAF /* IOSOnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSOnboardingView.swift; sourceTree = "<group>"; };
 		735CBD9B5E81026213099EA5 /* whisper.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = whisper.xcframework; path = Vendor/whisper.xcframework; sourceTree = "<group>"; };
@@ -129,6 +132,7 @@
 		8C859078EF3E2B819FC6CB31 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		9FE174407DF42C0763004189 /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
 		A6DA98773BDB3BC6D07FC12F /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A793AA8EEA4F1E22F0178754 /* IOSSlackViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSSlackViews.swift; sourceTree = "<group>"; };
 		A8FAB00D21790A46BE878736 /* UISnapshotHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UISnapshotHelper.swift; sourceTree = "<group>"; };
 		AA5B42BD533D9A00EC7E9E44 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AAB1E0377A1DAF0068C590DC /* LocalWhisper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWhisper.swift; sourceTree = "<group>"; };
@@ -308,6 +312,7 @@
 				F7E2ADFA90FC10174433C80C /* MeetingBriefViews.swift */,
 				BFD45B8B0E4B9DA6D3E7DD50 /* MenuBarView.swift */,
 				8C859078EF3E2B819FC6CB31 /* SettingsView.swift */,
+				6E800DA9E139356E75DE53C2 /* SlackIntegrationViews.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -387,6 +392,7 @@
 				06E318AE736602BAED7E81E6 /* IOSHistoryView.swift */,
 				722D86D86475E8DA29B1DCAF /* IOSOnboardingView.swift */,
 				5108DA1302B75F9951E0EC8A /* IOSSettingsView.swift */,
+				A793AA8EEA4F1E22F0178754 /* IOSSlackViews.swift */,
 				9FE174407DF42C0763004189 /* RecordingView.swift */,
 			);
 			path = Views;
@@ -625,6 +631,7 @@
 				47C778D2983D9F72A2730CD0 /* SettingsView.swift in Sources */,
 				B8809B175FB55E7735CF3605 /* SharedConstants.swift in Sources */,
 				EAF6DA7848F8701302333D01 /* ShravaMacApp.swift in Sources */,
+				CE75BB9795E9AF1803482CAB /* SlackIntegrationViews.swift in Sources */,
 				F06BAEC76F498D39AC14DF5E /* TextInserter.swift in Sources */,
 				371450E1C198BD5CC4D4FC17 /* UISnapshotHelper.swift in Sources */,
 			);
@@ -641,6 +648,7 @@
 				730241A94B5ADC70EB8C32B0 /* IOSHistoryView.swift in Sources */,
 				EB4F27D3E21B9B5CAD85D945 /* IOSOnboardingView.swift in Sources */,
 				349DE7BBDC8AD6A480614539 /* IOSSettingsView.swift in Sources */,
+				734FD3BF22B9ADF844F66FFE /* IOSSlackViews.swift in Sources */,
 				694D377DB3D4665F3375610F /* IOSWhisper.swift in Sources */,
 				D55BEB0485C342CEFF142C8C /* PhoneCallMonitor.swift in Sources */,
 				D998357366FAADFD69C3CFE2 /* RecordingActivityAttributes.swift in Sources */,

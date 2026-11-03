@@ -163,6 +163,7 @@ struct IOSHistoryDetailView: View {
     @State private var analyzing = false
     @State private var errorText: String?
     @State private var showBrief = false
+    @State private var showSlackSend = false
 
     var body: some View {
         ZStack {
@@ -250,6 +251,12 @@ struct IOSHistoryDetailView: View {
                     if let brief {
                         ToolbarItemGroup(placement: .primaryAction) {
                             Button {
+                                showSlackSend = true
+                            } label: {
+                                Label("Slack", systemImage: "paperplane")
+                            }
+                            .buttonStyle(.glass)
+                            Button {
                                 UIPasteboard.general.string = brief.asMarkdown()
                             } label: {
                                 Label("Copy", systemImage: "doc.on.doc")
@@ -278,6 +285,15 @@ struct IOSHistoryDetailView: View {
                 }
             }
             .presentationDetents([.large, .medium])
+            .sheet(isPresented: $showSlackSend) {
+                if let brief {
+                    IOSSendBriefToSlackSheet(
+                        brief: brief,
+                        entry: entry,
+                        title: ShravaTheme.title(from: entry.cleanedText, limit: 80)
+                    )
+                }
+            }
         }
     }
 
@@ -300,9 +316,30 @@ struct IOSHistoryDetailView: View {
             let result = try await OllamaClient.shared.analyzeMeeting(transcript: entry.cleanedText)
             try await BriefStore.shared.save(result, for: entry.id)
             brief = result
+            await autoSendToSlackIfNeeded(result)
         } catch {
             errorText = error.localizedDescription
             if brief == nil { showBrief = false }
+        }
+    }
+
+
+    private func autoSendToSlackIfNeeded(_ brief: MeetingBrief) async {
+        let s = SlackSettingsStore.load()
+        guard s.autoSendAfterAnalyze, SlackSecrets.hasToken(), let channel = s.defaultChannelID, !channel.isEmpty else { return }
+        do {
+            _ = try await SlackClient.shared.postMeetingBrief(
+                brief: brief,
+                channelID: channel,
+                channelName: s.defaultChannelName,
+                title: ShravaTheme.title(from: entry.cleanedText, limit: 80),
+                date: entry.timestamp,
+                durationSeconds: entry.durationSeconds,
+                transcript: entry.cleanedText,
+                includeTranscript: s.includeTranscript
+            )
+        } catch {
+            errorText = "Slack auto-send failed: \(error.localizedDescription)"
         }
     }
 }

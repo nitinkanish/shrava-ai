@@ -1,0 +1,20 @@
+display_information:
+  name: Shrava
+  description: Send Meeting Briefs from Shrava — Every Conversation, Captured.
+  background_color: "#6B2D7B"
+features:
+  bot_user:
+    display_name: Shrava
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - channels:read
+      - groups:read
+      - channels:join
+      - chat:write.public
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
