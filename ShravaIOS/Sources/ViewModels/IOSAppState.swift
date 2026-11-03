@@ -455,6 +455,18 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     /// Human-readable NSError domain/code for on-screen diagnostics.
     static func formatError(_ error: Error) -> String {
+        if let urlErr = error as? URLError {
+            switch urlErr.code {
+            case .notConnectedToInternet, .networkConnectionLost:
+                return "No network connection. Check Wi‑Fi or cellular and try again."
+            case .timedOut:
+                return "The request timed out. Try again when the connection is stronger."
+            case .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                return "Couldn’t reach the server. Check the endpoint in Settings."
+            default:
+                break
+            }
+        }
         let ns = error as NSError
         let desc = error.localizedDescription
         if ns.domain == "Shrava" || (ns.domain.isEmpty && ns.code == 0) {
@@ -469,13 +481,26 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     private func debugLog(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)\n"
-        Self.log.info("\(message, privacy: .public)")
-        print("SHRAVA \(message)")
-        NSLog("SHRAVA %@", message)
+        // Never log secrets (tokens/keys).
+        let scrubbed = message
+            .replacingOccurrences(of: #"xox[baprs]-[A-Za-z0-9-]+"#, with: "xox***", options: .regularExpression)
+            .replacingOccurrences(of: #"sk-[A-Za-z0-9]+"#, with: "sk-***", options: .regularExpression)
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(scrubbed)\n"
+        Self.log.info("\(scrubbed, privacy: .public)")
+        print("SHRAVA \(scrubbed)")
+        NSLog("SHRAVA %@", scrubbed)
         let url = debugLogURL
+        let maxBytes = 512_000
         if let data = line.data(using: .utf8) {
             if FileManager.default.fileExists(atPath: url.path) {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                   let size = attrs[.size] as? NSNumber, size.intValue > maxBytes {
+                    // Rotate: keep the last ~half of the file.
+                    if let existing = try? Data(contentsOf: url), existing.count > maxBytes / 2 {
+                        let trimmed = existing.suffix(maxBytes / 2)
+                        try? trimmed.write(to: url, options: .atomic)
+                    }
+                }
                 if let handle = try? FileHandle(forWritingTo: url) {
                     defer { try? handle.close() }
                     try? handle.seekToEnd()
@@ -999,6 +1024,11 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                         await self.updatePendingProgress(id: entryID, progress: p, fileName: fileName, duration: durationSeconds, recoveredTitle: recoveredTitle)
                         self.updateContinuedProgress(p)
                     }
+                },
+                partialText: { [weak self] text in
+                    Task { @MainActor in
+                        await self?.savePartialTranscript(id: entryID, text: text, fileName: fileName, duration: durationSeconds)
+                    }
                 }
             )
             await finishTranscription(result, replacing: entryID, audioFileName: fileName)
@@ -1009,16 +1039,36 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         } catch {
             let msg = Self.formatError(error)
             debugLog("TRANSCRIBE fail id=\(entryID.uuidString) \(msg)")
-            pending.transcriptionState = .failed
-            pending.transcriptionProgress = transcriptionProgress
-            pending.cleanedText = "Transcription failed — tap to retry"
-            pending.originalText = msg
-            await historyManager.update(pending)
-            historyEpoch += 1
-            lastError = "Error: \(msg)"
-            notifyError()
-            await markLiveActivityFailed("Transcription failed")
-            endTranscribeBackgroundWork(success: false)
+            // Prefer any progressive text already saved; never mark failed if we have text.
+            let existing = await historyManager.get(id: entryID)
+            let partial = (existing?.cleanedText ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let looksLikePlaceholder = partial.isEmpty
+                || partial.hasPrefix("Transcribing")
+                || partial.hasPrefix("Recovered")
+                || partial.hasPrefix("Transcription failed")
+            if !looksLikePlaceholder {
+                pending.transcriptionState = .partial
+                pending.transcriptionProgress = transcriptionProgress
+                pending.cleanedText = partial
+                pending.originalText = existing?.originalText ?? partial
+                await historyManager.update(pending)
+                historyEpoch += 1
+                lastError = "Partial transcript saved — tap Retry to continue. (\(msg))"
+                await markLiveActivitySaved()
+                endTranscribeBackgroundWork(success: true)
+            } else {
+                pending.transcriptionState = .failed
+                pending.transcriptionProgress = transcriptionProgress
+                pending.cleanedText = "Transcription failed — tap to retry"
+                pending.originalText = msg
+                await historyManager.update(pending)
+                historyEpoch += 1
+                lastError = "Error: \(msg)"
+                notifyError()
+                await markLiveActivityFailed("Transcription failed")
+                endTranscribeBackgroundWork(success: false)
+            }
         }
 
         isProcessing = false
@@ -1048,6 +1098,31 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         await updateLiveActivityTranscribing(progress: progress)
         // Throttle History list churn: update epoch every ~10%.
         if pct % 10 == 0 {
+            historyEpoch += 1
+        }
+    }
+
+    private func savePartialTranscript(
+        id: UUID,
+        text: String,
+        fileName: String,
+        duration: Double
+    ) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let entry = HistoryEntry(
+            id: id,
+            originalText: trimmed,
+            cleanedText: trimmed,
+            language: SettingsManager.shared.settings.language.rawValue,
+            durationSeconds: duration,
+            transcriptionState: .pending,
+            audioFileName: fileName,
+            transcriptionProgress: transcriptionProgress
+        )
+        await historyManager.update(entry)
+        // Throttle UI refresh.
+        if Int((transcriptionProgress * 100).rounded()) % 20 == 0 {
             historyEpoch += 1
         }
     }
@@ -1101,7 +1176,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     func retryTranscription(for entry: HistoryEntry) async {
-        guard entry.transcriptionState == .failed || entry.transcriptionState == .pending,
+        guard entry.transcriptionState == .failed || entry.transcriptionState == .pending || entry.transcriptionState == .partial,
               let name = entry.audioFileName else { return }
         let url = Self.recordingsDirectory.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -1135,22 +1210,51 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                         )
                         self?.updateContinuedProgress(p)
                     }
+                },
+                partialText: { [weak self] text in
+                    Task { @MainActor in
+                        await self?.savePartialTranscript(
+                            id: entry.id,
+                            text: text,
+                            fileName: name,
+                            duration: entry.durationSeconds
+                        )
+                    }
                 }
             )
             await finishTranscription(result, replacing: entry.id, audioFileName: name)
             await markLiveActivitySaved()
             endTranscribeBackgroundWork(success: true)
         } catch {
+            let msg = Self.formatError(error)
+            let existing = await historyManager.get(id: entry.id)
+            let partial = (existing?.cleanedText ?? entry.cleanedText)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let looksLikePlaceholder = partial.isEmpty
+                || partial.hasPrefix("Transcribing")
+                || partial.hasPrefix("Recovered")
+                || partial.hasPrefix("Transcription failed")
             var failed = entry
-            failed.transcriptionState = .failed
-            failed.cleanedText = "Transcription failed — tap to retry"
-            failed.originalText = Self.formatError(error)
-            await historyManager.update(failed)
-            historyEpoch += 1
-            lastError = "Error: \(Self.formatError(error))"
-            notifyError()
-            await markLiveActivityFailed("Transcription failed")
-            endTranscribeBackgroundWork(success: false)
+            if !looksLikePlaceholder {
+                failed.transcriptionState = .partial
+                failed.cleanedText = partial
+                failed.originalText = existing?.originalText ?? partial
+                await historyManager.update(failed)
+                historyEpoch += 1
+                lastError = "Partial transcript saved — tap Retry to continue. (\(msg))"
+                await markLiveActivitySaved()
+                endTranscribeBackgroundWork(success: true)
+            } else {
+                failed.transcriptionState = .failed
+                failed.cleanedText = "Transcription failed — tap to retry"
+                failed.originalText = msg
+                await historyManager.update(failed)
+                historyEpoch += 1
+                lastError = "Error: \(msg)"
+                notifyError()
+                await markLiveActivityFailed("Transcription failed")
+                endTranscribeBackgroundWork(success: false)
+            }
         }
         isProcessing = false
     }
@@ -1176,7 +1280,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 cleanedText: "Recovered recording — tap to transcribe",
                 language: SettingsManager.shared.settings.language.rawValue,
                 durationSeconds: duration,
-                transcriptionState: .failed,
+                transcriptionState: .pending,
                 audioFileName: url.lastPathComponent,
                 transcriptionProgress: 0
             )
@@ -1186,11 +1290,33 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         }
     }
 
+    /// Legacy: recovered orphans were stored as `.failed` and looked like real failures in History.
+    func migrateRecoveredFailedEntries() async {
+        let all = await historyManager.getAll()
+        var changed = false
+        for entry in all where entry.transcriptionState == .failed
+            && entry.cleanedText.hasPrefix("Recovered")
+            && entry.audioFileName != nil {
+            var fixed = entry
+            fixed.transcriptionState = .pending
+            await historyManager.update(fixed)
+            changed = true
+        }
+        if changed { historyEpoch += 1 }
+    }
+
     /// Resume any History rows still marked pending (app killed mid-Whisper).
     func resumePendingTranscriptions() async {
+        await migrateRecoveredFailedEntries()
         let all = await historyManager.getAll()
-        for entry in all where entry.transcriptionState == .pending {
-            debugLog("RESUME pending \(entry.id.uuidString)")
+        for entry in all where entry.transcriptionState == .pending || entry.transcriptionState == .partial {
+            // Do not auto-start recovered orphans ("tap to transcribe") — only resume mid-run jobs.
+            let label = entry.cleanedText
+            let midRun = label.hasPrefix("Transcribing")
+                || entry.transcriptionProgress > 0.01
+                || entry.transcriptionState == .partial
+            guard midRun else { continue }
+            debugLog("RESUME \(entry.transcriptionState.rawValue) \(entry.id.uuidString)")
             await retryTranscription(for: entry)
         }
     }
@@ -1199,7 +1325,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     private func enqueueNewestOrphanIfNeeded(titlePrefix: String) async -> UUID? {
         await recoverOrphanedRecordings()
         let all = await historyManager.getAll()
-        guard let entry = all.first(where: { $0.transcriptionState == .failed && $0.audioFileName != nil }) else { return nil }
+        guard let entry = all.first(where: { ($0.transcriptionState == .pending || $0.transcriptionState == .failed || $0.transcriptionState == .partial) && $0.audioFileName != nil && $0.cleanedText.hasPrefix("Recovered") }) else { return nil }
         await retryTranscription(for: entry)
         return entry.id
     }
@@ -1278,10 +1404,15 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         if !hasMicrophonePermission {
             let granted = await requestMicrophonePermission()
             if !granted {
-                lastError = "Microphone permission not granted"
+                lastError = "Microphone access is off. Enable it in Settings → Shrava → Microphone."
                 debugLog("prepare: mic denied")
                 return false
             }
+        }
+        if !Self.hasEnoughFreeStorage(minimumBytes: 200_000_000) {
+            lastError = "Not enough free storage to record. Free at least 200 MB and try again."
+            debugLog("prepare: low storage")
+            return false
         }
         refreshModelStatus()
         guard modelReady else {
@@ -1290,6 +1421,15 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             return false
         }
         return true
+    }
+
+    private static func hasEnoughFreeStorage(minimumBytes: Int64) -> Bool {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        guard let values = try? docs.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+              let free = values.volumeAvailableCapacityForImportantUsage else {
+            return true // if unknown, don't block
+        }
+        return free >= minimumBytes
     }
 
     private func writeTranscriptionToAppGroup(_ text: String) {

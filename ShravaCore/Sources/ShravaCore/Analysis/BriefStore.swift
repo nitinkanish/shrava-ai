@@ -6,14 +6,18 @@ public actor BriefStore {
 
     private var cache: [UUID: MeetingBrief] = [:]
     private var loaded = false
+    private let overrideURL: URL?
 
     private var fileURL: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+        if let overrideURL { return overrideURL }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Shrava", isDirectory: true)
             .appendingPathComponent("briefs.json")
     }
 
-    public init() {}
+    public init(storageURL: URL? = nil) {
+        self.overrideURL = storageURL
+    }
 
     public func load() async {
         guard !loaded else { return }

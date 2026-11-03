@@ -368,13 +368,19 @@ public final class OllamaClient: @unchecked Sendable {
     }
 
     private func chunkTranscript(_ text: String, maxChars: Int) -> [String] {
-        guard text.count > maxChars else { return [text] }
+        TranscriptChunking.chunk(text, maxChars: maxChars)
+    }
+}
+
+/// Pure transcript splitter used by OllamaClient (and unit tests).
+public enum TranscriptChunking {
+    public static func chunk(_ text: String, maxChars: Int) -> [String] {
+        guard maxChars > 0, text.count > maxChars else { return [text] }
         var chunks: [String] = []
         var start = text.startIndex
         while start < text.endIndex {
             var end = text.index(start, offsetBy: maxChars, limitedBy: text.endIndex) ?? text.endIndex
             if end < text.endIndex {
-                // Prefer a paragraph / sentence break near the end.
                 let windowStart = text.index(end, offsetBy: -min(800, text.distance(from: start, to: end)), limitedBy: start) ?? start
                 let window = text[windowStart..<end]
                 if let r = window.range(of: "\n\n", options: .backwards) {

@@ -219,3 +219,35 @@ Shrava/
 © 2026 Shrava. Developed by Nitin Kanish, [Debugged Pro](https://debuggedpro.com).
 
 Clean-room implementation. No third-party dictation app code, assets, or prompts.
+
+## Testing
+
+ShravaCore ships with an XCTest suite (SPM) covering:
+
+- Transcript chunking / merge helpers
+- Ollama client request/response parsing (mocked `URLProtocol`)
+- Slack Block Kit formatter limits and Slack client auth parsing (mocked)
+- Keychain save/load/delete
+- History + BriefStore persistence (atomic writes) and `TranscriptionState` migration
+- Recording state machine transitions (start/pause/resume/stop/interrupt)
+- Transcript chunk scheduling math
+- `shrava://` URL / intent routing
+
+### Run tests locally
+
+```bash
+# ShravaCore (macOS host)
+cd ShravaCore && swift test
+
+# Or via xcodebuild (iOS Simulator — use a booted sim UUID if preferred)
+xcodebuild test -project Shrava.xcodeproj -scheme ShravaCore -destination 'platform=macOS'
+```
+
+CI (`.github/workflows/ci.yml`) runs ShravaCore tests plus unsigned iOS Simulator and macOS Debug builds on `macos-15`.
+
+### Production / Release notes
+
+- `shrava://debug/*` URL schemes are compiled out of Release builds.
+- On-device file log (`Documents/shrava-debug.log`) rotates at ~512 KB and redacts Slack/API tokens.
+- Orphaned recordings are recovered as **pending** (ready to transcribe), not failed.
+- Transcription never marks **failed** if any chunk produced text — it saves **partial** and offers Retry.

@@ -46,9 +46,11 @@ struct ShravaIOSApp: App {
                 appState.openRecordTabForLiveActivity()
             }
         case "debug":
-            // shrava://debug/long|quick|intent — same code paths as UI / Control Center.
+            // shrava://debug/* — DEBUG builds only (disabled in Release).
+            #if DEBUG
             let path = url.pathComponents.dropFirst().first?.lowercased() ?? "long"
             appState.debugStart(path: path)
+            #endif
         case "history":
             appState.currentTab = .history
             if let idStr = url.pathComponents.dropFirst().first, let id = UUID(uuidString: idStr) {

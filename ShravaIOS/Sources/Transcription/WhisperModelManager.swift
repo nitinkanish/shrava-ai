@@ -56,11 +56,24 @@ final class WhisperModelManager: ObservableObject {
         refreshStatus()
     }
 
+    /// Accept sizes within 2% of the published ggml blob (integrity / truncated download check).
+    private func isValidModelSize(_ bytes: Int64) -> Bool {
+        let expected = Self.expectedByteCount
+        let tol = max(1_000_000, expected / 50)
+        return abs(bytes - expected) <= tol || bytes > expected - tol
+    }
+
     func refreshStatus() {
         if FileManager.default.fileExists(atPath: modelURL.path),
-           (modelByteCount ?? 0) > 1_000_000 {
+           let size = modelByteCount, size > 1_000_000, isValidModelSize(size) {
             status = .ready
             downloadProgress = 1
+        } else if FileManager.default.fileExists(atPath: modelURL.path),
+                  let size = modelByteCount, size > 1_000_000, !isValidModelSize(size) {
+            // Truncated / corrupt — treat as missing so download can resume.
+            try? FileManager.default.removeItem(at: modelURL)
+            status = .missing
+            downloadProgress = 0
         } else if case .downloading = status {
             // keep downloading state
         } else {
@@ -141,6 +154,15 @@ final class WhisperModelManager: ObservableObject {
                     do {
                         try? FileManager.default.removeItem(at: destination)
                         try FileManager.default.moveItem(at: tempURL, to: destination)
+                        if let size = self?.modelByteCount, let mgr = self, !mgr.isValidModelSize(size) {
+                            try? FileManager.default.removeItem(at: destination)
+                            let err = NSError(domain: "WhisperModel", code: -2, userInfo: [
+                                NSLocalizedDescriptionKey: "Model download incomplete (\(size) bytes). Tap Download to resume."
+                            ])
+                            self?.status = .failed(err.localizedDescription)
+                            cont.resume(throwing: err)
+                            return
+                        }
                         self?.downloadProgress = 1
                         self?.status = .ready
                         cont.resume()

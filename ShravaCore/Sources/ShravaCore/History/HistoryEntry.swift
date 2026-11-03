@@ -3,6 +3,8 @@ import Foundation
 public enum TranscriptionState: String, Codable, Sendable, Hashable {
     case complete
     case pending
+    /// Some chunks produced text but the run did not finish cleanly — tap Retry to continue.
+    case partial
     case failed
 }
 
@@ -66,16 +68,30 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
     }
 
     public var isPendingOrFailed: Bool {
-        transcriptionState == .pending || transcriptionState == .failed
+        transcriptionState == .pending || transcriptionState == .partial || transcriptionState == .failed
     }
 
     public var displayTitle: String {
         switch transcriptionState {
         case .pending:
             let pct = Int((transcriptionProgress * 100).rounded())
+            if cleanedText.hasPrefix("Recovered") || cleanedText.hasPrefix("Transcribing") {
+                return cleanedText.contains("%") ? cleanedText : "Transcribing… \(pct)%"
+            }
             return "Transcribing… \(pct)%"
+        case .partial:
+            let body = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if body.isEmpty || body.hasPrefix("Recovered") || body.hasPrefix("Transcribing") {
+                return "Partial transcript — tap to retry"
+            }
+            return body
         case .failed:
-            return "Transcription failed — tap to retry"
+            let body = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Don't scream "failed" for unrecovered orphans waiting on first attempt.
+            if body.hasPrefix("Recovered") {
+                return body
+            }
+            return body.isEmpty ? "Transcription failed — tap to retry" : body
         case .complete:
             return cleanedText
         }

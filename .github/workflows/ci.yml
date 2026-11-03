@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  shrava-core-tests:
+    name: ShravaCore SPM tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode_16.app || true
+      - name: Test ShravaCore
+        working-directory: ShravaCore
+        run: swift test --disable-xctest 2>/dev/null || swift test
+
+  ios-build:
+    name: iOS build (no signing)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode_16.app || true
+      - name: Build ShravaIOS (simulator, unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Shrava.xcodeproj \
+            -scheme ShravaIOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build \
+            | xcbeautify || xcodebuild \
+            -project Shrava.xcodeproj \
+            -scheme ShravaIOS \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+  macos-build:
+    name: macOS build (no signing)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app || sudo xcode-select -s /Applications/Xcode_16.app || true
+      - name: Build ShravaMac (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Shrava.xcodeproj \
+            -scheme ShravaMac \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build

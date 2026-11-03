@@ -136,8 +136,16 @@ struct IOSHistoryRow: View {
                     .lineLimit(2)
                 Spacer(minLength: 8)
                 if entry.transcriptionState == .pending {
-                    ProgressView(value: liveProgress)
-                        .frame(width: 36)
+                    if entry.cleanedText.lowercased().contains("recovered") {
+                        Image(systemName: "arrow.clockwise.circle")
+                            .foregroundStyle(ShravaTheme.purple)
+                    } else {
+                        ProgressView(value: liveProgress)
+                            .frame(width: 36)
+                    }
+                } else if entry.transcriptionState == .partial {
+                    Image(systemName: "arrow.clockwise.circle")
+                        .foregroundStyle(ShravaTheme.purple)
                 } else if entry.transcriptionState == .failed {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(ShravaTheme.coral)
@@ -182,8 +190,17 @@ struct IOSHistoryRow: View {
     private var rowTitle: String {
         switch entry.transcriptionState {
         case .pending:
+            if entry.cleanedText.lowercased().contains("recovered") {
+                return "Recovered recording"
+            }
             let pct = Int((liveProgress * 100).rounded())
             return "Transcribing… \(pct)%"
+        case .partial:
+            let body = entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if body.isEmpty || body.hasPrefix("Transcribing") || body.hasPrefix("Recovered") {
+                return "Partial transcript"
+            }
+            return ShravaTheme.title(from: body)
         case .failed:
             if entry.cleanedText.lowercased().contains("recovered") {
                 return "Recovered recording"
@@ -197,7 +214,12 @@ struct IOSHistoryRow: View {
     private var rowSubtitle: String {
         switch entry.transcriptionState {
         case .pending:
+            if entry.cleanedText.lowercased().contains("recovered") {
+                return "Tap to open, then Transcribe"
+            }
             return String(format: "%.0fs · on-device Whisper", entry.durationSeconds)
+        case .partial:
+            return "Partial — tap Retry to continue"
         case .failed:
             return "Tap to open, then Retry"
         case .complete:
@@ -253,15 +275,16 @@ struct IOSHistoryDetailView: View {
                             .padding(.horizontal, 4)
                     }
 
-                    if entry.transcriptionState == .failed || entry.transcriptionState == .pending {
+                    if entry.transcriptionState == .failed || entry.transcriptionState == .pending || entry.transcriptionState == .partial {
                         Button {
                             Task { await appState.retryTranscription(for: entry) }
                         } label: {
                             HStack {
                                 Image(systemName: "arrow.clockwise")
-                                Text(entry.transcriptionState == .pending ? "Transcribing…" : "Retry transcription")
+                                Text(entry.transcriptionState == .pending && appState.isProcessing ? "Transcribing…" : "Retry transcription")
                             }
                             .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Retry transcription")
                         }
                         .buttonStyle(.glassProminent)
                         .tint(ShravaTheme.coral)
@@ -280,7 +303,7 @@ struct IOSHistoryDetailView: View {
                     }
                     .buttonStyle(.glassProminent)
                     .tint(ShravaTheme.purple)
-                    .disabled(analyzing || entry.transcriptionState != .complete || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(analyzing || !(entry.transcriptionState == .complete || entry.transcriptionState == .partial) || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || entry.cleanedText.hasPrefix("Recovered") || entry.cleanedText.hasPrefix("Transcribing"))
 
                     if brief != nil {
                         Button("View Meeting Brief") { showBrief = true }
