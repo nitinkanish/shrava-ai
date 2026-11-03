@@ -17,8 +17,8 @@ Local-first voice dictation and meeting capture for **macOS** and **iPhone**. Ho
 
 | Desktop (macOS 14+) | Mobile (iOS 18+) |
 | --- | --- |
-| Hold **Fn** to dictate into any app | Liquid Glass UI |
-| Double-tap Fn for **hands-free**; tap again to stop | Long **background** meeting recording |
+| Hold **Right Option** (default) to dictate into any app | Liquid Glass UI |
+| Double-tap the hotkey for **hands-free**; tap again to stop | Long **background** meeting recording |
 | Local Whisper via **whisper-cli** (`large-v3-turbo`) | On-device Whisper **base** (`ggml-base-q5_1`) |
 | Draggable creative recording indicator + menu-bar logo | Compact **Dynamic Island** / Live Activity with **Stop** |
 | **Meeting Brief** via Ollama + **Send to Slack** | Action Button / Siri / Control Center start **without opening the app** |
@@ -40,7 +40,7 @@ Menu-bar app: hold your hotkey, speak, release — polished text is typed into t
 
 ### Features
 
-- **Hold Fn dictation** (or Control+Option / custom hotkey) with a floating, **draggable** recording indicator and custom Shrava menu-bar logo
+- **Hold-to-talk dictation** on **Right Option** by default (Fn, Right Command or Control+Option selectable in Settings → Hotkey) with a floating, **draggable** recording indicator and custom Shrava menu-bar logo
 - **Hands-free mode**: double-tap the hotkey to start, tap again to stop
 - **Local Whisper** through Homebrew `whisper-cli` / whisper.cpp — prefers `ggml-large-v3-turbo` in Application Support
 - **Meeting Brief**: send a transcript to **Ollama** (`gpt-oss:120b-cloud`, with non-cloud fallback) for insights and action items — API key stored in **Keychain**
@@ -51,14 +51,14 @@ Menu-bar app: hold your hotkey, speak, release — polished text is typed into t
 ### Install (Mac)
 
 1. Open `dist/Shrava.dmg` (or build from source below) and drag **Shrava** to Applications (or `~/Applications`).
-2. First launch: grant **Microphone** and **Accessibility** (needed for Fn and typing into other apps).
+2. First launch: grant **Microphone** and **Accessibility** (needed for the hotkey and typing into other apps). After every reinstall/update macOS resets this: remove Shrava with **−** and re-add it with **+** in Accessibility.
 3. Install Whisper runtime if needed: `brew install whisper-cpp` (provides `whisper-cli`).
 4. Place a ggml model (e.g. `ggml-large-v3-turbo-q5_0.bin`) in  
    `~/Library/Application Support/Shrava/models/`  
    (Settings → Model shows the folder and readiness).
 5. Optional Meeting Brief: open Settings → **Meeting Brief**, choose Ollama endpoint mode, and save your Ollama API key (Keychain).
 
-**Usage:** hold **Fn** to talk; release to insert text. Double-tap Fn for hands-free. Open History / Dictionary / Settings from the menu bar.
+**Usage:** hold **Right Option** to talk; release to insert text. Double-tap for hands-free. Open History / Dictionary / Settings from the menu bar (Settings button or ⌘,). Fn can conflict with macOS (emoji/dictation) or other apps, so Right Option is the default.
 
 ---
 
@@ -204,7 +204,8 @@ Shrava/
 
 | Issue | What to try |
 | --- | --- |
-| Fn does nothing (Mac) | Toggle Shrava off/on under **System Settings → Privacy & Security → Accessibility** |
+| Hotkey does nothing (Mac) | Accessibility was reset (happens after each reinstall). Remove Shrava with **−** and re-add it under **System Settings → Privacy & Security → Accessibility**; it re-arms within 2 s |
+| Settings won't open (Mac) | Update to the latest build; use the menu-bar **Settings** button or ⌘, |
 | `whisper-cli not installed` | `brew install whisper-cpp`; confirm Settings → Model |
 | Model not ready (Mac) | Drop `ggml-large-v3-turbo*.bin` into Application Support → Shrava → models |
 | Model not ready (iPhone) | Settings → download Whisper base; keep the app open until finished |
