@@ -28,6 +28,9 @@ targets:
     sources:
       - path: ShravaMac/Sources
       - path: Shared
+        excludes:
+          - RecordingActivityAttributes.swift
+          - StopRecordingIntent.swift
       - path: ShravaMac/Resources/Assets.xcassets
     dependencies:
       - package: ShravaCore
@@ -84,6 +87,8 @@ targets:
       - package: ShravaCore
       - target: ShravaKeyboard
         embed: true
+      - target: ShravaLiveActivity
+        embed: true
       - framework: Vendor/whisper.xcframework
         embed: true
     settings:
@@ -118,6 +123,9 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
+        UIBackgroundModes:
+          - audio
+        NSSupportsLiveActivities: true
         CFBundleURLTypes:
           - CFBundleURLName: com.shrava.ios
             CFBundleURLSchemes:
@@ -140,6 +148,9 @@ targets:
     sources:
       - path: ShravaKeyboard/Sources
       - path: Shared
+        excludes:
+          - RecordingActivityAttributes.swift
+          - StopRecordingIntent.swift
     dependencies:
       - package: ShravaCore
     settings:
@@ -178,6 +189,41 @@ targets:
         keychain-access-groups:
           - $(AppIdentifierPrefix)com.shrava
 
+  ShravaLiveActivity:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "26.1"
+    sources:
+      - path: ShravaLiveActivity/Sources
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shrava.ios.liveactivity
+        INFOPLIST_FILE: ShravaLiveActivity/Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ShravaLiveActivity/Resources/ShravaLiveActivity.entitlements
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS:
+          - $(inherited)
+          - "@executable_path/Frameworks"
+          - "@executable_path/../../Frameworks"
+        PRODUCT_NAME: ShravaLiveActivity
+    info:
+      path: ShravaLiveActivity/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Shrava Live
+        CFBundleName: ShravaLiveActivity
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: XPC!
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: ShravaLiveActivity/Resources/ShravaLiveActivity.entitlements
+      properties: {}
+
+
 schemes:
   ShravaMac:
     build:
@@ -199,6 +245,7 @@ schemes:
       targets:
         ShravaIOS: all
         ShravaKeyboard: all
+        ShravaLiveActivity: all
     run:
       config: Debug
     test:

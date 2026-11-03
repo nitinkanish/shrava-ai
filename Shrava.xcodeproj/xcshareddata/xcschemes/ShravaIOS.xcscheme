@@ -35,6 +35,20 @@
                ReferencedContainer = "container:Shrava.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "63B544799447EE69D25C76D1"
+               BuildableName = "ShravaLiveActivity.appex"
+               BlueprintName = "ShravaLiveActivity"
+               ReferencedContainer = "container:Shrava.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

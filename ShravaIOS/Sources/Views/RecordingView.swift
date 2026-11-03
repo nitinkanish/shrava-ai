@@ -12,24 +12,25 @@ struct RecordingView: View {
                 ShravaTheme.softBackground
                     .ignoresSafeArea()
 
-                VStack(spacing: 28) {
-                    header
-                    Spacer(minLength: 8)
-                    heroGlass
-                    statusBlock
-                    Spacer(minLength: 8)
-                    holdToRecordControl
-                    if appState.showingResult {
-                        resultCard
-                            .transition(.asymmetric(
-                                insertion: .move(edge: .bottom).combined(with: .opacity),
-                                removal: .opacity
-                            ))
+                ScrollView {
+                    VStack(spacing: 24) {
+                        header
+                        heroGlass
+                        statusBlock
+                        longRecordingControls
+                        quickHoldHint
+                        if appState.showingResult {
+                            resultCard
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .bottom).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
+                        }
                     }
-                    Spacer(minLength: 12)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -87,7 +88,7 @@ struct RecordingView: View {
                     }
 
                     Button {
-                        // Tap toggles when not using press-and-hold path.
+                        // Mic is press-and-hold for quick capture; long recording uses the button below.
                     } label: {
                         ZStack {
                             Circle()
@@ -98,10 +99,10 @@ struct RecordingView: View {
                                     .controlSize(.large)
                                     .tint(.white)
                             } else {
-                                Image(systemName: appState.isRecording ? "waveform" : "mic.fill")
+                                Image(systemName: micSymbol)
                                     .font(.system(size: 44, weight: .semibold))
                                     .foregroundStyle(.white)
-                                    .symbolEffect(.variableColor.iterative, isActive: appState.isRecording)
+                                    .symbolEffect(.variableColor.iterative, isActive: appState.isRecording && !appState.isPaused)
                             }
                         }
                     }
@@ -118,6 +119,13 @@ struct RecordingView: View {
         }
     }
 
+    private var micSymbol: String {
+        if appState.isRecording {
+            return appState.isLongRecording ? "stop.fill" : "waveform"
+        }
+        return "mic.fill"
+    }
+
     private var breathingSamples: [Float] {
         let t = Date().timeIntervalSinceReferenceDate
         return (0..<32).map { i in
@@ -132,40 +140,102 @@ struct RecordingView: View {
                     .font(.system(size: 44, weight: .light, design: .rounded))
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                Text("Listening…")
+                Text(statusCaption)
                     .font(.headline)
                     .foregroundStyle(.secondary)
             } else if appState.isProcessing {
-                Text("Transcribing on-device…")
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 10) {
+                    Text("Transcribing on-device…")
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                    ProgressView(value: appState.transcriptionProgress)
+                        .tint(ShravaTheme.purple)
+                        .padding(.horizontal, 24)
+                    Text("\(Int(appState.transcriptionProgress * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             } else if let error = appState.lastError {
                 Text(error)
                     .font(.subheadline)
                     .foregroundStyle(ShravaTheme.coral)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Hold to capture")
+                Text("Meetings & quick capture")
                     .font(.title3.weight(.semibold))
-                Text("Release to transcribe with Whisper")
+                Text("Start a long recording, or hold the mic for a quick note")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
         }
         .animation(.snappy, value: appState.isRecording)
     }
 
-    private var holdToRecordControl: some View {
-        Text(appState.isRecording ? "Release to stop" : "Press & hold")
+    private var statusCaption: String {
+        if appState.isPaused { return "Paused — tap Resume" }
+        if appState.isLongRecording { return "Long recording · Dynamic Island active" }
+        return "Listening…"
+    }
+
+    private var longRecordingControls: some View {
+        VStack(spacing: 12) {
+            Button {
+                Task { await appState.toggleLongRecording() }
+            } label: {
+                Label(
+                    appState.isRecording && appState.isLongRecording ? "Stop & Transcribe" : "Start long recording",
+                    systemImage: appState.isRecording && appState.isLongRecording ? "stop.circle.fill" : "record.circle"
+                )
+                .font(.headline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(appState.isRecording && appState.isLongRecording ? ShravaTheme.coral : ShravaTheme.purple)
+            .disabled(appState.isProcessing || (appState.isRecording && !appState.isLongRecording))
+
+            if appState.isRecording && appState.isLongRecording {
+                HStack(spacing: 12) {
+                    Button {
+                        Task {
+                            if appState.isPaused {
+                                await appState.resumeLongRecording()
+                            } else {
+                                await appState.pauseLongRecording()
+                            }
+                        }
+                    } label: {
+                        Label(appState.isPaused ? "Resume" : "Pause", systemImage: appState.isPaused ? "play.fill" : "pause.fill")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.glass)
+
+                    Button {
+                        Task { await appState.cancelRecording() }
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.glass)
+                }
+            }
+        }
+    }
+
+    private var quickHoldHint: some View {
+        Text(appState.isRecording && !appState.isLongRecording ? "Release to stop" : "Press & hold mic for quick capture")
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .shravaGlass(
-                .regular.tint(appState.isRecording ? ShravaTheme.coral.opacity(0.4) : ShravaTheme.purple.opacity(0.25)),
+                .regular.tint(appState.isRecording && !appState.isLongRecording ? ShravaTheme.coral.opacity(0.4) : ShravaTheme.purple.opacity(0.25)),
                 in: Capsule(),
                 interactive: true
             )
-            .opacity(appState.isProcessing ? 0.5 : 1)
+            .opacity(appState.isProcessing || (appState.isRecording && appState.isLongRecording) ? 0.45 : 1)
             .allowsHitTesting(false)
     }
 
@@ -177,8 +247,9 @@ struct RecordingView: View {
                 Task { await appState.startRecording() }
             }
             .onEnded { _ in
+                let wasHolding = holding
                 holding = false
-                if appState.isRecording {
+                if wasHolding, appState.isRecording, !appState.isLongRecording {
                     Task { await appState.stopRecordingAndTranscribe() }
                 }
             }
@@ -218,8 +289,13 @@ struct RecordingView: View {
     }
 
     private func formatDuration(_ duration: TimeInterval) -> String {
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
+        let total = Int(duration)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let seconds = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
         let tenths = Int((duration.truncatingRemainder(dividingBy: 1)) * 10)
         return String(format: "%d:%02d.%d", minutes, seconds, tenths)
     }

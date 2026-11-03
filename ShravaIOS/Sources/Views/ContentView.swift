@@ -113,7 +113,7 @@ struct FloatingRecordAccessory: View {
             appState.currentTab = .record
         } else if !appState.isProcessing {
             appState.currentTab = .record
-            await appState.startRecording()
+            await appState.startLongRecording()
         }
     }
 

@@ -214,4 +214,110 @@ final class IOSWhisper: @unchecked Sendable {
         guard let ch = outBuffer.floatChannelData?[0] else { throw IOSWhisperError.invalidAudio }
         return Array(UnsafeBufferPointer(start: ch, count: Int(outBuffer.frameLength)))
     }
+
+    /// Transcribe a long on-disk recording in ~30s PCM chunks to avoid OOM.
+    func transcribeFile(
+        url: URL,
+        durationSeconds: Double,
+        language: SupportedLanguage,
+        dictionary: PersonalDictionary,
+        progress: @MainActor @escaping (Double) -> Void
+    ) async throws -> TranscriptionResult {
+        let modelURL = await MainActor.run { WhisperModelManager.shared.modelURL }
+        try ensureLoaded(modelURL: modelURL)
+
+        let langCode = language == .auto ? "auto" : language.rawValue
+        let chunkSeconds: Double = 30
+        let estimatedChunks = max(1, Int(ceil(max(durationSeconds, 1) / chunkSeconds)))
+
+        let file = try AVAudioFile(forReading: url)
+        let format = file.processingFormat
+        let totalFrames = file.length
+        guard totalFrames > 0 else { throw IOSWhisperError.invalidAudio }
+
+        let target = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: 16000,
+            channels: 1,
+            interleaved: false
+        )!
+        guard let converter = AVAudioConverter(from: format, to: target) else {
+            throw IOSWhisperError.invalidAudio
+        }
+
+        let sourceChunkFrames = AVAudioFrameCount(format.sampleRate * chunkSeconds)
+        var parts: [String] = []
+        var framesRead: AVAudioFramePosition = 0
+        var chunkIndex = 0
+
+        while framesRead < totalFrames {
+            let remaining = AVAudioFrameCount(totalFrames - framesRead)
+            let readCount = min(sourceChunkFrames, remaining)
+            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readCount) else {
+                throw IOSWhisperError.invalidAudio
+            }
+            file.framePosition = framesRead
+            try file.read(into: inBuffer, frameCount: readCount)
+            framesRead += AVAudioFramePosition(inBuffer.frameLength)
+            if inBuffer.frameLength == 0 { break }
+
+            let ratio = 16000.0 / format.sampleRate
+            let outFrames = AVAudioFrameCount(Double(inBuffer.frameLength) * ratio) + 32
+            guard let outBuffer = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: outFrames) else {
+                throw IOSWhisperError.invalidAudio
+            }
+            converter.reset()
+            var error: NSError?
+            var consumed = false
+            let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
+                if consumed {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+                consumed = true
+                outStatus.pointee = .haveData
+                return inBuffer
+            }
+            converter.convert(to: outBuffer, error: &error, withInputFrom: inputBlock)
+            if let error { throw error }
+            guard let ch = outBuffer.floatChannelData?[0], outBuffer.frameLength > 0 else { continue }
+            let samples = Array(UnsafeBufferPointer(start: ch, count: Int(outBuffer.frameLength)))
+
+            let text: String = try await withCheckedThrowingContinuation { cont in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    do {
+                        let t = try self.runWhisper(samples: samples, language: langCode)
+                        cont.resume(returning: t)
+                    } catch {
+                        cont.resume(throwing: error)
+                    }
+                }
+            }
+            if !text.isEmpty { parts.append(text) }
+            chunkIndex += 1
+            let frac = min(1.0, Double(framesRead) / Double(totalFrames))
+            await progress(frac)
+            _ = estimatedChunks // silence unused if duration unknown
+        }
+
+        await progress(1)
+
+        let original = parts.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty else { throw IOSWhisperError.transcriptionFailed }
+
+        var cleaned = original
+        if SettingsManager.shared.settings.autoCleanup {
+            cleaned = TranscriptionCleanup.localCleanup(cleaned)
+        }
+        cleaned = await dictionary.applyCorrections(to: cleaned)
+
+        return TranscriptionResult(
+            originalText: original,
+            cleanedText: cleaned,
+            language: language,
+            durationSeconds: durationSeconds
+        )
+    }
+
+
 }
