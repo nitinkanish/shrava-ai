@@ -145,6 +145,20 @@ public final class OllamaClient: @unchecked Sendable {
         return reply.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Polish a Whisper transcript with the configured cloud model (meaning-preserving).
+    public func enhanceTranscript(_ text: String, languageHint: String = "Hindi and English") async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return text }
+        let settings = AnalysisSettingsStore.load()
+        let messages = [
+            ChatMessage(role: "system", content: TranscriptionCleanup.enhanceSystemPrompt(languageHint: languageHint)),
+            ChatMessage(role: "user", content: TranscriptionCleanup.enhanceUserPrompt(trimmed))
+        ]
+        let out = try await chat(messages: messages, settings: settings, formatJSON: false, temperature: 0.2)
+        let polished = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return polished.isEmpty ? text : polished
+    }
+
     public func analyzeMeeting(transcript: String, titleHint: String? = nil) async throws -> MeetingBrief {
         let settings = self.settings
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -89,7 +89,7 @@ final class AppState: ObservableObject {
         defer { isProcessing = false }
         
         guard let recorder = audioRecorder,
-              let audioData = await recorder.stopRecording() else {
+              let stopped = await recorder.stopRecording() else {
             lastError = "No audio data recorded"
             return
         }
@@ -97,10 +97,11 @@ final class AppState: ObservableObject {
         do {
             NSLog("Shrava: transcribing locally with Whisper")
             let result = try await LocalWhisper.shared.transcribe(
-                audioData: audioData,
+                audioData: stopped.data,
                 durationSeconds: recordingDuration,
                 language: SettingsManager.shared.settings.language,
-                dictionary: dictionary
+                dictionary: dictionary,
+                existingURL: stopped.url
             )
             
             lastTranscription = result.cleanedText
@@ -110,7 +111,8 @@ final class AppState: ObservableObject {
                 cleanedText: result.cleanedText,
                 language: result.language.rawValue,
                 durationSeconds: result.durationSeconds,
-                appBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+                appBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+                audioFileName: result.audioFileName ?? stopped.url.lastPathComponent
             )
             await historyManager.add(entry)
             NSLog("Shrava: saved to history (\(result.cleanedText.count) chars)")

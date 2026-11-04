@@ -52,16 +52,21 @@ final class LocalWhisper: @unchecked Sendable {
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    func transcribe(audioData: Data, durationSeconds: Double, language: SupportedLanguage, dictionary: PersonalDictionary) async throws -> TranscriptionResult {
+    func transcribe(audioData: Data, durationSeconds: Double, language: SupportedLanguage, dictionary: PersonalDictionary, existingURL: URL? = nil) async throws -> TranscriptionResult {
         guard let bin = binaryPath else { throw LocalWhisperError.binaryMissing }
         let models = Self.availableModels()
         guard let primaryModel = models.first else {
             throw LocalWhisperError.modelMissing(Self.modelsDirectory.path)
         }
 
-        // Persist the full recording for analysis / retry (also used as the whisper input).
-        let wav = Self.recordingsDirectory.appendingPathComponent(UUID().uuidString + ".wav")
-        try audioData.write(to: wav)
+        // Prefer the recorder's on-disk WAV so History can play the same file.
+        let wav: URL
+        if let existingURL, FileManager.default.fileExists(atPath: existingURL.path) {
+            wav = existingURL
+        } else {
+            wav = Self.recordingsDirectory.appendingPathComponent(UUID().uuidString + ".wav")
+            try audioData.write(to: wav)
+        }
 
         let resolved = try await resolveLanguage(
             bin: bin,
@@ -108,15 +113,47 @@ final class LocalWhisper: @unchecked Sendable {
             }
         }
 
+        let droppedHindi = language == .auto
+            && WhisperLanguageSupport.likelyDroppedHindiSpans(
+                text: original,
+                durationSeconds: durationSeconds,
+                resolved: usedLanguage
+            )
+        if WhisperLanguageSupport.needsRetry(text: original, durationSeconds: durationSeconds) || droppedHindi {
+            NSLog("Shrava: Whisper chunked retry (droppedHindi=\(droppedHindi))")
+            let chunkRaw = try await transcribeChunked(bin: bin, model: usedModel, wav: wav, languageCode: "auto")
+            let chunkText = Self.cleanRawOutput(chunkRaw)
+            if chunkText.count > original.count
+                || WhisperLanguageSupport.containsDevanagari(chunkText)
+                || !WhisperLanguageSupport.needsRetry(text: chunkText, durationSeconds: durationSeconds) {
+                original = chunkText
+                raw = chunkRaw
+            }
+        }
+
         var cleaned = original
         if SettingsManager.shared.settings.autoCleanup { cleaned = TranscriptionCleanup.localCleanup(cleaned) }
         cleaned = await dictionary.applyCorrections(to: cleaned)
+
+        let settings = SettingsManager.shared.settings
+        if settings.enhanceTranscript, OllamaSecrets.hasAPIKey() {
+            do {
+                let hint = usedLanguage == .hindi || usedLanguage == .auto ? "Hindi and English" : usedLanguage.displayName
+                let enhanced = try await OllamaClient.shared.enhanceTranscript(cleaned, languageHint: hint)
+                if !enhanced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = enhanced
+                }
+            } catch {
+                NSLog("Shrava: enhance transcript skipped: \(error.localizedDescription)")
+            }
+        }
 
         return TranscriptionResult(
             originalText: original,
             cleanedText: cleaned,
             language: usedLanguage == .auto ? resolved : usedLanguage,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            audioFileName: wav.lastPathComponent
         )
     }
 
@@ -157,16 +194,62 @@ final class LocalWhisper: @unchecked Sendable {
         return .hindi
     }
 
+
+    /// Split long/mixed audio into ~12s windows and decode each with auto language (recovers Hinglish).
+    private func transcribeChunked(bin: String, model: URL, wav: URL, languageCode: String) async throws -> String {
+        let data = try Data(contentsOf: wav)
+        let header = 44
+        let bytesPerSecond = 32_000
+        let chunkSeconds = 12.0
+        let chunkBytes = Int(chunkSeconds * Double(bytesPerSecond))
+        guard data.count > header + chunkBytes else {
+            return try await runWhisper(bin: bin, model: model, wav: wav, languageCode: languageCode)
+        }
+        var parts: [String] = []
+        var offset = header
+        var index = 0
+        while offset < data.count {
+            let end = min(data.count, offset + chunkBytes)
+            let pcm = data[offset..<end]
+            var chunk = Data()
+            chunk.append(contentsOf: data.prefix(header))
+            chunk.append(pcm)
+            let dataSize = UInt32(chunk.count - header).littleEndian
+            let fileSize = UInt32(chunk.count - 8).littleEndian
+            withUnsafeBytes(of: fileSize) { chunk.replaceSubrange(4..<8, with: $0) }
+            withUnsafeBytes(of: dataSize) { chunk.replaceSubrange(40..<44, with: $0) }
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("shrava-chunk-\(index).wav")
+            try chunk.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            let code = languageCode == "auto" || languageCode == "hi" || languageCode == "en" ? "auto" : languageCode
+            let raw = try await runWhisper(bin: bin, model: model, wav: tmp, languageCode: code)
+            let text = Self.cleanRawOutput(raw)
+            if !text.isEmpty { parts.append(text) }
+            offset = end
+            index += 1
+        }
+        return parts.joined(separator: " ")
+    }
+
     private func runWhisper(bin: String, model: URL, wav: URL, languageCode: String) async throws -> String {
-        let args = [
+        var args = [
             "-m", model.path,
             "-f", wav.path,
             "-l", languageCode,
             "-t", "\(Self.threadCount)",
             "-nt",
             "-np",
-            "--suppress-nst"
+            "-bs", "5",
+            "-mc", "0",
+            "-tp", "0",
+            "-tpi", "0.2",
+            "--suppress-nst",
+            "--prompt", "Hindi and English meeting discussion."
         ]
+        let vad = Self.modelsDirectory.appendingPathComponent("ggml-silero-v5.1.2.bin")
+        if FileManager.default.fileExists(atPath: vad.path) {
+            args += ["--vad", "-vm", vad.path]
+        }
         return try await runProcess(bin: bin, args: args)
     }
 

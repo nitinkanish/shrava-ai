@@ -49,15 +49,16 @@ actor AudioRecorder {
         }
     }
     
-    /// Stops recording and returns PCM data. The WAV file is kept under Application Support/Shrava/Recordings.
-    func stopRecording() -> Data? {
+    /// Stops recording and returns PCM data + on-disk URL (kept under Application Support/Shrava/Recordings).
+    func stopRecording() -> (data: Data, url: URL)? {
         LevelMeter.recorder = nil
         audioRecorder?.stop()
         audioRecorder = nil
         
         guard let url = recordingURL else { return nil }
         recordingURL = nil
-        return try? Data(contentsOf: url)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return (data, url)
     }
     
     func cancelRecording() {

@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import AVFoundation
 import ShravaCore
 
 struct IOSHistoryView: View {
@@ -236,6 +237,12 @@ struct IOSHistoryDetailView: View {
     @State private var errorText: String?
     @State private var showBrief = false
     @State private var showSlackSend = false
+    @StateObject private var audioPlayer: RecordingAudioController
+
+    init(entry: HistoryEntry) {
+        self.entry = entry
+        _audioPlayer = StateObject(wrappedValue: RecordingAudioController(fileName: entry.audioFileName))
+    }
 
     var body: some View {
         ZStack {
@@ -257,6 +264,10 @@ struct IOSHistoryDetailView: View {
                     .padding(18)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .shravaGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+                    if entry.audioFileName != nil {
+                        RecordingPlaybackBar(controller: audioPlayer, fileName: entry.audioFileName)
+                    }
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Transcript")
@@ -530,5 +541,75 @@ private struct BriefMarkdownFile: Transferable {
             try value.markdown.write(to: url, atomically: true, encoding: .utf8)
             return SentTransferredFile(url)
         }
+    }
+}
+
+
+struct RecordingPlaybackBar: View {
+    @ObservedObject var controller: RecordingAudioController
+    let fileName: String?
+
+    private var timeLabel: String {
+        "\(Self.fmt(controller.currentTime)) / \(Self.fmt(controller.duration))"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Recording")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(timeLabel)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if let err = controller.loadError {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(ShravaTheme.coral)
+            } else {
+                HStack(spacing: 14) {
+                    Button {
+                        controller.toggle()
+                    } label: {
+                        Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title2)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(ShravaTheme.purple)
+                    .accessibilityLabel(controller.isPlaying ? "Pause" : "Play")
+
+                    Slider(
+                        value: Binding(
+                            get: { controller.currentTime },
+                            set: { controller.seek(to: $0) }
+                        ),
+                        in: 0...max(controller.duration, 0.1)
+                    )
+                    .tint(ShravaTheme.purple)
+                }
+                if let url = controller.fileURL {
+                    ShareLink(item: url) {
+                        Label("Share / Export audio", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.glass)
+                    .frame(maxWidth: .infinity)
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .shravaGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onDisappear { controller.pause() }
+    }
+
+    private static func fmt(_ t: TimeInterval) -> String {
+        guard t.isFinite, t >= 0 else { return "0:00" }
+        let total = Int(t.rounded())
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
     }
 }

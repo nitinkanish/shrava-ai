@@ -147,6 +147,22 @@ public enum WhisperLanguageSupport: Sendable {
         language == .hindi ? .english : .hindi
     }
 
+
+    public static func containsDevanagari(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            (0x0900...0x097F).contains(scalar.value)
+        }
+    }
+
+    /// When Auto resolved to Hindi (Hinglish bias) but the transcript is Latin-only,
+    /// Hindi spans were likely dropped — prefer chunked re-decode.
+    public static func likelyDroppedHindiSpans(text: String, durationSeconds: Double, resolved: SupportedLanguage) -> Bool {
+        guard resolved == .hindi, durationSeconds >= 8 else { return false }
+        let filtered = filterHallucinations(text)
+        guard !filtered.isEmpty else { return true }
+        return !containsDevanagari(filtered)
+    }
+
     /// Map a picker selection into an explicit whisper language code (`en` / `hi` / …).
     /// `.auto` is resolved separately via detect.
     public static func whisperCode(for language: SupportedLanguage) -> String {

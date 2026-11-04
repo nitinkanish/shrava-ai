@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 import ShravaCore
 
 final class HistoryWindowController {
@@ -207,6 +208,13 @@ struct HistoryCard: View {
     @State private var brief: MeetingBrief?
     @State private var showBrief = false
     @State private var analyzeError: String?
+    @StateObject private var audioPlayer: RecordingAudioController
+
+    init(entry: HistoryEntry, onDelete: @escaping () -> Void) {
+        self.entry = entry
+        self.onDelete = onDelete
+        _audioPlayer = StateObject(wrappedValue: RecordingAudioController(fileName: entry.audioFileName))
+    }
 
     private var appName: String? {
         guard let id = entry.appBundleIdentifier,
@@ -240,6 +248,10 @@ struct HistoryCard: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+                }
+
+                if entry.audioFileName != nil {
+                    MacRecordingPlaybackBar(controller: audioPlayer)
                 }
 
                 HStack(spacing: 10) {
@@ -283,6 +295,19 @@ struct HistoryCard: View {
                 .help(brief == nil ? "Analyze meeting" : "Re-analyze")
                 .disabled(analyzing || entry.cleanedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
+                if let url = audioPlayer.fileURL {
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
+                    } label: { Image(systemName: "folder") }
+                    .help("Show audio in Finder")
+                    Button {
+                        let picker = NSSharingServicePicker(items: [url])
+                        if let view = NSApp.keyWindow?.contentView {
+                            picker.show(relativeTo: .zero, of: view, preferredEdge: .minY)
+                        }
+                    } label: { Image(systemName: "square.and.arrow.up") }
+                    .help("Share / export audio")
+                }
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.cleanedText, forType: .string)
@@ -369,5 +394,50 @@ struct HistoryCard: View {
         } catch {
             analyzeError = "Slack auto-send failed: \(error.localizedDescription)"
         }
+    }
+}
+
+
+struct MacRecordingPlaybackBar: View {
+    @ObservedObject var controller: RecordingAudioController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let err = controller.loadError {
+                Text(err).font(.system(size: 11)).foregroundStyle(.red)
+            } else {
+                HStack(spacing: 10) {
+                    Button {
+                        controller.toggle()
+                    } label: {
+                        Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help(controller.isPlaying ? "Pause" : "Play")
+
+                    Slider(
+                        value: Binding(
+                            get: { controller.currentTime },
+                            set: { controller.seek(to: $0) }
+                        ),
+                        in: 0...max(controller.duration, 0.1)
+                    )
+                    .controlSize(.small)
+
+                    Text("\(Self.fmt(controller.currentTime)) / \(Self.fmt(controller.duration))")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 88, alignment: .trailing)
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .onDisappear { controller.pause() }
+    }
+
+    private static func fmt(_ t: TimeInterval) -> String {
+        guard t.isFinite, t >= 0 else { return "0:00" }
+        let total = Int(t.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }

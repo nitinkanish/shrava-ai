@@ -39,6 +39,11 @@ struct GeneralSettingsView: View {
             }
             Section("Writing") {
                 Toggle("Auto-cleanup (remove um, uh, repeats; fix capitals)", isOn: $settings.autoCleanup)
+                Toggle("Enhance transcript with Ollama (Hinglish polish)", isOn: $settings.enhanceTranscript)
+                Text(OllamaSecrets.hasAPIKey()
+                     ? "After Whisper, gpt-oss:120b-cloud fixes punctuation while keeping meaning. Uses your Meeting Brief key."
+                     : "Add an Ollama API key under Meeting Brief to enable cloud polish after on-device Whisper.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Show original text in History", isOn: $settings.showOriginalText)
             }
             Section("Behaviour") {
@@ -144,7 +149,7 @@ struct APISettingsView: View {
                     }
                     Link("Whisper on GitHub", destination: URL(string: "https://github.com/openai/whisper")!)
                 }
-                Text("Drop another ggml model there (for example ggml-small.bin) to switch. large-v3-turbo is preferred when present.")
+                Text("Preferred: ggml-large-v3-turbo-q5_0.bin (~547 MB). Also accepts ggml-small / ggml-base. Beam search + Hinglish prompt + optional Silero VAD (ggml-silero-v5.1.2.bin) are enabled automatically.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

@@ -73,7 +73,7 @@ struct IOSOnboardingView: View {
                 .font(.title)
                 .fontWeight(.bold)
 
-            Text("Shrava downloads a multilingual Whisper model (~57 MB) once, then transcribes entirely on your iPhone. English and Hindi are supported.")
+            Text("Shrava downloads a multilingual Whisper model on first use (Large v3 Turbo ~547 MB recommended for Hindi/English; smaller options in Settings), then transcribes entirely on your iPhone.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)

@@ -29,3 +29,21 @@ public enum TranscriptionCleanup {
         return result
     }
 }
+
+
+extension TranscriptionCleanup {
+    /// System prompt for optional Ollama "Enhance transcript" polish (Hinglish-aware).
+    public static func enhanceSystemPrompt(languageHint: String) -> String {
+        """
+        You polish speech-to-text transcripts of Hindi/English (Hinglish) meetings.
+        Keep the speaker's meaning and wording. Fix punctuation, casing, and obvious ASR errors.
+        Preserve Hindi in Devanagari when the source used Devanagari; keep Roman Hinglish when the source was Roman.
+        Do not summarize, invent content, or translate wholesale. Language context: \(languageHint).
+        Return ONLY the polished transcript text — no preamble, no quotes, no markdown.
+        """
+    }
+
+    public static func enhanceUserPrompt(_ transcript: String) -> String {
+        "Polish this transcript:\n\n" + transcript
+    }
+}

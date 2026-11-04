@@ -78,4 +78,33 @@ final class WhisperLanguageSupportTests: XCTestCase {
         XCTAssertEqual(WhisperLanguageSupport.whisperCode(for: .english), "en")
         XCTAssertEqual(WhisperLanguageSupport.whisperCode(for: .hindi), "hi")
     }
+
+    func testContainsDevanagari() {
+        XCTAssertTrue(WhisperLanguageSupport.containsDevanagari("नमस्ते team"))
+        XCTAssertFalse(WhisperLanguageSupport.containsDevanagari("Hello team"))
+    }
+
+    func testLikelyDroppedHindiSpans() {
+        XCTAssertTrue(
+            WhisperLanguageSupport.likelyDroppedHindiSpans(
+                text: "Hello team today we discuss the budget and timeline thank you",
+                durationSeconds: 20,
+                resolved: .hindi
+            )
+        )
+        XCTAssertFalse(
+            WhisperLanguageSupport.likelyDroppedHindiSpans(
+                text: "नमस्ते team आज budget discuss",
+                durationSeconds: 20,
+                resolved: .hindi
+            )
+        )
+        XCTAssertFalse(
+            WhisperLanguageSupport.likelyDroppedHindiSpans(
+                text: "Hello only english",
+                durationSeconds: 20,
+                resolved: .english
+            )
+        )
+    }
 }

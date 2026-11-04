@@ -73,6 +73,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var language: SupportedLanguage
     public var iCloudSyncEnabled: Bool
     public var autoCleanup: Bool
+    /// When true and an Ollama API key exists, polish the Whisper transcript via cloud model.
+    public var enhanceTranscript: Bool
     public var showOriginalText: Bool
     public var hapticFeedback: Bool
     public var soundFeedback: Bool
@@ -90,6 +92,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             language: .auto,
             iCloudSyncEnabled: false,
             autoCleanup: true,
+            enhanceTranscript: true,
             showOriginalText: false,
             hapticFeedback: true,
             soundFeedback: true,
@@ -103,6 +106,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             language: .auto,
             iCloudSyncEnabled: false,
             autoCleanup: true,
+            enhanceTranscript: true,
             showOriginalText: false,
             hapticFeedback: true,
             soundFeedback: true
@@ -114,6 +118,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         language: SupportedLanguage = .auto,
         iCloudSyncEnabled: Bool = false,
         autoCleanup: Bool = true,
+        enhanceTranscript: Bool = true,
         showOriginalText: Bool = false,
         hapticFeedback: Bool = true,
         soundFeedback: Bool = true,
@@ -125,6 +130,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.language = language
         self.iCloudSyncEnabled = iCloudSyncEnabled
         self.autoCleanup = autoCleanup
+        self.enhanceTranscript = enhanceTranscript
         self.showOriginalText = showOriginalText
         self.hapticFeedback = hapticFeedback
         self.soundFeedback = soundFeedback
@@ -179,7 +185,7 @@ public final class SettingsManager: @unchecked Sendable {
 #if os(macOS)
 extension AppSettings {
     enum CodingKeys: String, CodingKey {
-        case language, iCloudSyncEnabled, autoCleanup, showOriginalText, hapticFeedback, soundFeedback
+        case language, iCloudSyncEnabled, autoCleanup, enhanceTranscript, showOriginalText, hapticFeedback, soundFeedback
         case hotkeyModifiers, hotkeyKeyCode, handsFreeEnabled, useAccessibilityInsertion
     }
 
@@ -188,6 +194,7 @@ extension AppSettings {
         language = try c.decodeIfPresent(SupportedLanguage.self, forKey: .language) ?? .auto
         iCloudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .iCloudSyncEnabled) ?? false
         autoCleanup = try c.decodeIfPresent(Bool.self, forKey: .autoCleanup) ?? true
+        enhanceTranscript = try c.decodeIfPresent(Bool.self, forKey: .enhanceTranscript) ?? true
         showOriginalText = try c.decodeIfPresent(Bool.self, forKey: .showOriginalText) ?? false
         hapticFeedback = try c.decodeIfPresent(Bool.self, forKey: .hapticFeedback) ?? true
         soundFeedback = try c.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true

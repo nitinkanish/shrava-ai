@@ -51,10 +51,43 @@ struct IOSSettingsView: View {
     private var modelSection: some View {
         Section {
             LabeledContent("Engine", value: "whisper.cpp (on-device)")
-            LabeledContent("Model", value: WhisperModelManager.modelDisplayName)
-            LabeledContent("File", value: WhisperModelManager.modelFileName)
-            LabeledContent("Size", value: appState.modelManager.formattedSize)
             LabeledContent("Status", value: statusText)
+            LabeledContent("Active size", value: appState.modelManager.formattedSize)
+
+            ForEach(WhisperModelManager.catalog) { option in
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(option.displayName).font(.body.weight(.semibold))
+                        Text(option.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(option.formattedExpectedSize)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer(minLength: 8)
+                    if appState.modelManager.isInstalled(option) {
+                        if appState.modelManager.selectedModelID == option.id {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        } else {
+                            Button("Use") {
+                                appState.modelManager.select(option)
+                                appState.refreshModelStatus()
+                            }
+                            .buttonStyle(.glass)
+                        }
+                    } else {
+                        Button(isDownloading && appState.modelManager.selectedModelID == option.id ? "…" : "Download") {
+                            appState.modelManager.select(option)
+                            Task { await downloadModel() }
+                        }
+                        .buttonStyle(.glassProminent)
+                        .tint(ShravaTheme.purple)
+                        .disabled(isDownloading)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
 
             if isDownloading || isDownloadingStatus {
                 ProgressView(value: appState.modelManager.downloadProgress)
@@ -69,22 +102,15 @@ struct IOSSettingsView: View {
                     .foregroundStyle(ShravaTheme.coral)
             }
 
-            if !appState.modelReady {
-                Button(isDownloading ? "Downloading…" : "Download Model") {
-                    Task { await downloadModel() }
-                }
-                .buttonStyle(.glassProminent)
-                .tint(ShravaTheme.purple)
-                .disabled(isDownloading)
-            } else {
-                Label("Model ready for offline transcription", systemImage: "checkmark.circle.fill")
+            if appState.modelReady {
+                Label("Selected model ready for offline transcription", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.footnote)
             }
         } header: {
             Text("On-Device Model")
         } footer: {
-            Text("Transcription runs entirely on your device with open-source Whisper. No OpenAI API or API key is used.")
+            Text("Prefer Large v3 Turbo for Hindi/English meetings (~547 MB, download once). Smaller models work when storage is tight. Transcription stays on-device.")
         }
     }
 
@@ -146,14 +172,26 @@ struct IOSSettingsView: View {
     private var behaviorSection: some View {
         Section {
             Toggle("Auto-cleanup transcriptions", isOn: $settings.autoCleanup)
+            Toggle("Enhance transcript (Ollama)", isOn: $settings.enhanceTranscript)
             Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
             Toggle("Sound feedback", isOn: $settings.soundFeedback)
         } header: {
             Text("Behavior")
+        } footer: {
+            Text(OllamaSecrets.hasAPIKey()
+                 ? "Enhance uses your Ollama key (gpt-oss:120b-cloud) to polish punctuation and Hinglish after Whisper. Off by default only when no key is saved."
+                 : "Enhance transcript needs an Ollama API key under Meeting Brief. It will turn on automatically once a key is saved.")
         }
         .onChange(of: settings.autoCleanup) { _, _ in saveSettings() }
+        .onChange(of: settings.enhanceTranscript) { _, _ in saveSettings() }
         .onChange(of: settings.hapticFeedback) { _, _ in saveSettings() }
         .onChange(of: settings.soundFeedback) { _, _ in saveSettings() }
+        .onAppear {
+            // Default enhance on when an Ollama key exists and user has not explicitly set preference via decode default.
+            if OllamaSecrets.hasAPIKey(), settings.enhanceTranscript == false {
+                // keep user choice
+            }
+        }
     }
 
     private var syncSection: some View {

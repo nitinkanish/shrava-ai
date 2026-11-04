@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import AVFoundation
 import OSLog
 import ShravaCore
@@ -163,24 +164,30 @@ final class IOSWhisper: @unchecked Sendable {
                     language: resolved,
                     allowEmpty: false
                 )
-                if !WhisperLanguageSupport.needsRetry(text: pass.text, durationSeconds: durationSeconds)
-                    || pass.text.count > 20 {
+                let droppedHindi = language == .auto
+                    && WhisperLanguageSupport.likelyDroppedHindiSpans(
+                        text: pass.text,
+                        durationSeconds: durationSeconds,
+                        resolved: pass.language
+                    )
+                if !WhisperLanguageSupport.needsRetry(text: pass.text, durationSeconds: durationSeconds), !droppedHindi {
                     await progress(1)
                     await partialText?(pass.text)
                     WhisperChunkLog.chunkLog.info("whole-pass ok lang=\(pass.language.rawValue, privacy: .public) chars=\(pass.text.count) dur=\(durationSeconds, format: .fixed(precision: 1))")
                     Self.clearCheckpoint(for: url)
                     return try await finalize(original: pass.text, language: pass.language, durationSeconds: durationSeconds, dictionary: dictionary)
                 }
-                WhisperChunkLog.chunkLog.warning("whole-pass weak (\(pass.text.count) chars) — falling back to chunks")
+                WhisperChunkLog.chunkLog.warning("whole-pass weak/mixed (\(pass.text.count) chars / \(String(format: "%.1f", durationSeconds))s droppedHindi=\(droppedHindi)) — falling back to chunks")
             } catch {
                 WhisperChunkLog.chunkLog.error("whole-pass failed: \(error.localizedDescription, privacy: .public) — chunk fallback")
             }
         }
 
+        // Re-allow Auto per chunk so mixed Hinglish recovers Hindi+English spans.
         return try await transcribeFileChunked(
             url: url,
             durationSeconds: durationSeconds,
-            language: resolved, // already resolved en/hi — do not re-auto per chunk
+            language: language == .auto ? .auto : resolved,
             dictionary: dictionary,
             progress: progress,
             partialText: partialText
@@ -292,7 +299,7 @@ final class IOSWhisper: @unchecked Sendable {
         guard let context else { throw IOSWhisperError.modelMissing }
 
         let maxThreads = max(1, min(8, ProcessInfo.processInfo.processorCount - 2))
-        var params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+        var params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH)
         params.print_realtime = false
         params.print_progress = false
         params.print_timestamps = false
@@ -303,51 +310,86 @@ final class IOSWhisper: @unchecked Sendable {
         params.no_context = true
         params.single_segment = false
         params.no_timestamps = true
+        params.suppress_blank = true
         params.suppress_nst = true
+        params.temperature = 0.0
+        params.temperature_inc = 0.2
+        params.beam_search.beam_size = 5
+        params.n_max_text_ctx = 0
+
+        let modelsDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Shrava/models", isDirectory: true)
+        let vadPath = modelsDir.appendingPathComponent("ggml-silero-v5.1.2.bin").path
+        let useVad = FileManager.default.fileExists(atPath: vadPath)
+        let hinglishPrompt = "Hindi and English meeting discussion."
 
         let pair: (String, Double) = try language.withCString { langPtr in
-            params.language = langPtr
-            params.detect_language = false // always set explicitly after our en/hi detect
-
-            let result = samples.withUnsafeBufferPointer { buf -> Int32 in
-                guard let base = buf.baseAddress else { return -1 }
-                return whisper_full(context, params, base, Int32(buf.count))
-            }
-            guard result == 0 else {
-                throw IOSWhisperError.transcriptionFailed
-            }
-
-            var transcription = ""
-            var logProbSum: Double = 0
-            var tokenCount = 0
-            let n = whisper_full_n_segments(context)
-            for i in 0..<n {
-                if let cStr = whisper_full_get_segment_text(context, i) {
-                    let seg = String(cString: cStr)
-                    if WhisperLanguageSupport.isPlaceholderLine(seg.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                        continue
+            try hinglishPrompt.withCString { promptPtr in
+                params.language = langPtr
+                params.detect_language = false
+                params.initial_prompt = promptPtr
+                params.carry_initial_prompt = false
+                if useVad {
+                    return try vadPath.withCString { vadPtr in
+                        params.vad = true
+                        params.vad_model_path = vadPtr
+                        return try self.executeWhisper(context: context, params: &params, samples: samples)
                     }
-                    transcription += seg
-                }
-                let nTok = whisper_full_n_tokens(context, i)
-                for t in 0..<nTok {
-                    let p = Double(whisper_full_get_token_p(context, i, t))
-                    if p > 0 {
-                        logProbSum += log(p)
-                        tokenCount += 1
-                    }
+                } else {
+                    params.vad = false
+                    params.vad_model_path = nil
+                    return try self.executeWhisper(context: context, params: &params, samples: samples)
                 }
             }
-            let text = WhisperLanguageSupport.filterHallucinations(
-                transcription.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            let avg = tokenCount > 0 ? logProbSum / Double(tokenCount) : -10
-            return (text, avg)
         }
 
-        if pair.0.isEmpty && !allowEmpty { throw IOSWhisperError.transcriptionFailed }
+        if pair.0.isEmpty && !allowEmpty {
+            throw IOSWhisperError.transcriptionFailed
+        }
         return pair
     }
+
+    private func executeWhisper(
+        context: OpaquePointer,
+        params: inout whisper_full_params,
+        samples: [Float]
+    ) throws -> (String, Double) {
+        let result = samples.withUnsafeBufferPointer { buf -> Int32 in
+            guard let base = buf.baseAddress else { return -1 }
+            return whisper_full(context, params, base, Int32(buf.count))
+        }
+        guard result == 0 else {
+            throw IOSWhisperError.transcriptionFailed
+        }
+
+        var transcription = ""
+        var logProbSum: Double = 0
+        var tokenCount = 0
+        let n = whisper_full_n_segments(context)
+        for i in 0..<n {
+            if let cStr = whisper_full_get_segment_text(context, i) {
+                let seg = String(cString: cStr)
+                if WhisperLanguageSupport.isPlaceholderLine(seg.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    continue
+                }
+                transcription += seg
+            }
+            let nTok = whisper_full_n_tokens(context, i)
+            for t in 0..<nTok {
+                let p = Double(whisper_full_get_token_p(context, i, t))
+                if p > 0 {
+                    logProbSum += Darwin.log(p)
+                    tokenCount += 1
+                }
+            }
+        }
+        let text = WhisperLanguageSupport.filterHallucinations(
+            transcription.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let avg = tokenCount > 0 ? logProbSum / Double(tokenCount) : -10
+        return (text, avg)
+    }
+
 
     // MARK: - Chunked fallback
 
@@ -361,7 +403,7 @@ final class IOSWhisper: @unchecked Sendable {
     ) async throws -> TranscriptionResult {
         let langCode = language == .auto ? "hi" : language.rawValue
         let resolvedLang: SupportedLanguage = language == .auto ? .hindi : language
-        let chunkSeconds: Double = 30
+        let chunkSeconds: Double = 12
 
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat
@@ -611,6 +653,19 @@ final class IOSWhisper: @unchecked Sendable {
         }
         cleaned = await dictionary.applyCorrections(to: cleaned)
 
+        let settings = SettingsManager.shared.settings
+        if settings.enhanceTranscript, OllamaSecrets.hasAPIKey() {
+            do {
+                let hint = (language == .hindi || language == .auto) ? "Hindi and English" : language.displayName
+                let enhanced = try await OllamaClient.shared.enhanceTranscript(cleaned, languageHint: hint)
+                if !enhanced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = enhanced
+                }
+            } catch {
+                // Best-effort polish — keep Whisper text on failure.
+            }
+        }
+
         return TranscriptionResult(
             originalText: original,
             cleanedText: cleaned,
@@ -618,4 +673,5 @@ final class IOSWhisper: @unchecked Sendable {
             durationSeconds: durationSeconds
         )
     }
+
 }
