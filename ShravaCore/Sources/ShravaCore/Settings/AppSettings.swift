@@ -36,7 +36,7 @@ public enum SupportedLanguage: String, CaseIterable, Codable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .auto: return "Auto-detect"
+        case .auto: return "Auto (English/Hindi)"
         case .english: return "English"
         case .spanish: return "Spanish"
         case .french: return "French"
@@ -87,20 +87,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static var `default`: AppSettings {
         #if os(macOS)
         return AppSettings(
-            language: .english,
+            language: .auto,
             iCloudSyncEnabled: false,
             autoCleanup: true,
             showOriginalText: false,
             hapticFeedback: true,
             soundFeedback: true,
             hotkeyModifiers: 0,
-            hotkeyKeyCode: 63, // Fn key
+            hotkeyKeyCode: 61, // Right Option
             handsFreeEnabled: true,
             useAccessibilityInsertion: true
         )
         #else
         return AppSettings(
-            language: .english,
+            language: .auto,
             iCloudSyncEnabled: false,
             autoCleanup: true,
             showOriginalText: false,
@@ -111,14 +111,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
     
     public init(
-        language: SupportedLanguage = .english,
+        language: SupportedLanguage = .auto,
         iCloudSyncEnabled: Bool = false,
         autoCleanup: Bool = true,
         showOriginalText: Bool = false,
         hapticFeedback: Bool = true,
         soundFeedback: Bool = true,
         hotkeyModifiers: UInt = 0,
-        hotkeyKeyCode: UInt16 = 63,
+        hotkeyKeyCode: UInt16 = 61,
         handsFreeEnabled: Bool = true,
         useAccessibilityInsertion: Bool = true
     ) {
@@ -185,14 +185,14 @@ extension AppSettings {
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        language = try c.decodeIfPresent(SupportedLanguage.self, forKey: .language) ?? .english
+        language = try c.decodeIfPresent(SupportedLanguage.self, forKey: .language) ?? .auto
         iCloudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .iCloudSyncEnabled) ?? false
         autoCleanup = try c.decodeIfPresent(Bool.self, forKey: .autoCleanup) ?? true
         showOriginalText = try c.decodeIfPresent(Bool.self, forKey: .showOriginalText) ?? false
         hapticFeedback = try c.decodeIfPresent(Bool.self, forKey: .hapticFeedback) ?? true
         soundFeedback = try c.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
         hotkeyModifiers = try c.decodeIfPresent(UInt.self, forKey: .hotkeyModifiers) ?? 0
-        hotkeyKeyCode = try c.decodeIfPresent(UInt16.self, forKey: .hotkeyKeyCode) ?? 63
+        hotkeyKeyCode = try c.decodeIfPresent(UInt16.self, forKey: .hotkeyKeyCode) ?? 61
         handsFreeEnabled = try c.decodeIfPresent(Bool.self, forKey: .handsFreeEnabled) ?? true
         useAccessibilityInsertion = try c.decodeIfPresent(Bool.self, forKey: .useAccessibilityInsertion) ?? true
     }

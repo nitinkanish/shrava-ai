@@ -132,6 +132,11 @@ struct IOSSettingsView: View {
                     Text(language.displayName).tag(language)
                 }
             }
+            Text(settings.language == .auto
+                 ? "Auto detects English or Hindi (including Hinglish), then transcribes the whole recording in one pass."
+                 : "Always transcribes in \(settings.language.displayName). Choose Auto (English/Hindi) for mixed meetings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
             Text("Transcription")
         }

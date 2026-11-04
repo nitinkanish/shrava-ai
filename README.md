@@ -19,7 +19,7 @@ Local-first voice dictation and meeting capture for **macOS** and **iPhone**. Ho
 | --- | --- |
 | Hold **Right Option** (default) to dictate into any app | Liquid Glass UI |
 | Double-tap the hotkey for **hands-free**; tap again to stop | Long **background** meeting recording |
-| Local Whisper via **whisper-cli** (`large-v3-turbo`) | On-device Whisper **base** (`ggml-base-q5_1`) |
+| Local Whisper via **whisper-cli** (`large-v3-turbo`); **Auto (English/Hindi)** | On-device Whisper **base**; **Auto (English/Hindi)** + whole-file pass |
 | Draggable creative recording indicator + menu-bar logo | Compact **Dynamic Island** / Live Activity with **Stop** |
 | **Meeting Brief** via Ollama + **Send to Slack** | Action Button / Siri / Control Center start **without opening the app** |
 | History, dictionary, settings tabs | Keyboard extension, history, dictionary, meeting brief |
@@ -42,7 +42,7 @@ Menu-bar app: hold your hotkey, speak, release — polished text is typed into t
 
 - **Hold-to-talk dictation** on **Right Option** by default (Fn, Right Command or Control+Option selectable in Settings → Hotkey) with a floating, **draggable** recording indicator and custom Shrava menu-bar logo
 - **Hands-free mode**: double-tap the hotkey to start, tap again to stop
-- **Local Whisper** through Homebrew `whisper-cli` / whisper.cpp — prefers `ggml-large-v3-turbo` in Application Support
+- **Local Whisper** through Homebrew `whisper-cli` / whisper.cpp — prefers `ggml-large-v3-turbo` in Application Support; default **Auto (English/Hindi)** detects language on the first ~30s, keeps the full recording WAV, and transcribes the whole file in one pass (chunked Whisper remains fallback). Filters `(Speaking in foreign language)` hallucinations and retries the other language / a larger model when needed
 - **Meeting Brief**: send a transcript to **Ollama** (`gpt-oss:120b-cloud`, with non-cloud fallback) for insights and action items — API key stored in **Keychain**
 - **Slack**: post briefs to a channel you pick (Block Kit), optional transcript thread — bot token in **Keychain**
 - Searchable **history**, personal **dictionary**, and Settings tabs (General, Hotkey, Model, Permissions, Meeting Brief, …)
@@ -77,12 +77,12 @@ iPhone app with Liquid Glass chrome, long-form meeting capture, and Shortcuts th
 ### Features
 
 - **Liquid Glass** UI (iOS 26 design language)
-- **Long background recording** (switch apps / lock screen) with AAC capture
+- **Long background recording** (switch apps / lock screen) with AAC capture; **auto-resumes after phone calls** (CXCallObserver + AVAudioSession interruption / route / media-reset)
 - **Dynamic Island** + Lock Screen **Live Activity** — compact mic + narrow timer; **Stop** ends recording without opening the app
 - **App Intents** (`AudioRecordingIntent` + `LiveActivityIntent`, `openAppWhenRun = false`):
   - *Start Shrava Recording* / *Stop* / *Toggle* for **Action Button**, **Back Tap**, **Shortcuts**, and **Siri**
   - **Control Center** control (`Shrava Recording`) toggles recording without launching UI
-- On-device **Whisper base** model (download once in Settings) — no OpenAI key
+- On-device **Whisper base** model (download once in Settings) — no OpenAI key; default **Auto (English/Hindi)** with whole-recording transcription, hallucination filtering, and language retry; full audio kept under Documents/Recordings
 - **Meeting Brief** (Ollama) with insights / action items; **Send to Slack**, **Copy**, and **Share as `.md`**
 - **Shrava Keyboard** for quick capture from other apps (Full Access recommended when App Groups are available)
 

@@ -6,7 +6,7 @@ final class SettingsTests: XCTestCase {
     func testDefaultSettings() {
         let settings = AppSettings.default
         
-        XCTAssertEqual(settings.language, .english)
+        XCTAssertEqual(settings.language, .auto)
         XCTAssertFalse(settings.iCloudSyncEnabled)
         XCTAssertTrue(settings.autoCleanup)
         XCTAssertFalse(settings.showOriginalText)
@@ -15,7 +15,9 @@ final class SettingsTests: XCTestCase {
     }
     
     func testSupportedLanguages() {
+        XCTAssertEqual(SupportedLanguage.auto.rawValue, "auto")
         XCTAssertEqual(SupportedLanguage.english.rawValue, "en")
+        XCTAssertEqual(SupportedLanguage.hindi.rawValue, "hi")
         XCTAssertEqual(SupportedLanguage.spanish.rawValue, "es")
         XCTAssertEqual(SupportedLanguage.french.rawValue, "fr")
         XCTAssertEqual(SupportedLanguage.german.rawValue, "de")
@@ -24,12 +26,18 @@ final class SettingsTests: XCTestCase {
     }
     
     func testLanguageDisplayNames() {
+        XCTAssertEqual(SupportedLanguage.auto.displayName, "Auto (English/Hindi)")
         XCTAssertEqual(SupportedLanguage.english.displayName, "English")
+        XCTAssertEqual(SupportedLanguage.hindi.displayName, "Hindi")
         XCTAssertEqual(SupportedLanguage.spanish.displayName, "Spanish")
         XCTAssertEqual(SupportedLanguage.french.displayName, "French")
         XCTAssertEqual(SupportedLanguage.german.displayName, "German")
         XCTAssertEqual(SupportedLanguage.japanese.displayName, "Japanese")
         XCTAssertEqual(SupportedLanguage.chinese.displayName, "Chinese")
+    }
+
+    func testPopularLanguagesLeadWithAutoEnglishHindi() {
+        XCTAssertEqual(SupportedLanguage.popular, [.auto, .english, .hindi])
     }
     
     func testAllLanguagesCovered() {

@@ -149,6 +149,9 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
             return
         }
 
+        // After phone calls / media resets the session is often stale — bounce it.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
         try activateSessionSync(for: .long)
 
         if let audioRecorder, !audioRecorder.isRecording {
@@ -493,8 +496,9 @@ final class IOSAudioRecorder: NSObject, AVAudioRecorderDelegate {
               let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
 
         switch reason {
-        case .oldDeviceUnavailable, .categoryChange, .override:
-            if audioRecorder?.isRecording == false {
+        case .oldDeviceUnavailable, .categoryChange, .override, .newDeviceAvailable, .routeConfigurationChange:
+            // Call end / Bluetooth handoff often lands here without a fresh interruptionEnded.
+            if audioRecorder?.isRecording == false, !PhoneCallMonitor.shared.hasActiveCall {
                 resumeWithRetry(trigger: "routeChange-\(reason.rawValue)")
             }
         default:

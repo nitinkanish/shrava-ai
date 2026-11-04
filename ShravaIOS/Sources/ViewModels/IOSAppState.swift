@@ -168,7 +168,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             audioRecorder?.pause(reason: .phoneCall)
             return
         }
-        // Call ended.
+        // Call ended (CXCallObserver hasEnded / no active calls).
         if pendingStartAfterCall {
             let title = pendingStartTitle
             let fromIntent = pendingStartFromIntent
@@ -183,7 +183,17 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
             }
             return
         }
-        if isRecording, isLongRecording, isPaused {
+        guard isRecording, isLongRecording, audioRecorder != nil else { return }
+        // Resume whenever we are paused OR the recorder stopped capturing during the call
+        // (unexpected finish / failed prior resume). Always re-arm retries on call end.
+        let recorderIdle = audioRecorder?.isRecording != true
+        let needsResume = isPaused
+            || audioRecorder?.isPausedRecording == true
+            || audioRecorder?.currentPauseReason != nil
+            || recorderIdle
+        if needsResume {
+            Self.log.info("callEnded resume isPaused=\(self.isPaused) idle=\(recorderIdle) reason=\(String(describing: self.audioRecorder?.currentPauseReason), privacy: .public)")
+            print("SHRAVA callEnded resume isPaused=\(isPaused) idle=\(recorderIdle)")
             audioRecorder?.resumeWithRetry(trigger: "callEnded")
         }
     }

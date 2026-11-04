@@ -15,9 +15,16 @@ enum LevelMeter {
 actor AudioRecorder {
     private var audioRecorder: AVAudioRecorder?
     private var recordingURL: URL?
+
+    private static var recordingsDirectory: URL {
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Shrava/Recordings", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
     
     func startRecording() async throws {
-        let url = FileManager.default.temporaryDirectory
+        let url = Self.recordingsDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("wav")
         
@@ -42,18 +49,14 @@ actor AudioRecorder {
         }
     }
     
+    /// Stops recording and returns PCM data. The WAV file is kept under Application Support/Shrava/Recordings.
     func stopRecording() -> Data? {
         LevelMeter.recorder = nil
         audioRecorder?.stop()
         audioRecorder = nil
         
         guard let url = recordingURL else { return nil }
-        
-        defer {
-            try? FileManager.default.removeItem(at: url)
-            recordingURL = nil
-        }
-        
+        recordingURL = nil
         return try? Data(contentsOf: url)
     }
     

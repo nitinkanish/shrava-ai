@@ -82,6 +82,25 @@ final class WhisperModelManager: ObservableObject {
         }
     }
 
+
+    /// Optional larger ggml (small) if the user already downloaded it — used for hallucination retries.
+    /// Not auto-downloaded (size); base remains the default.
+    func largerModelURLIfAvailable() -> URL? {
+        let candidates = [
+            "ggml-small-q5_1.bin",
+            "ggml-small.bin",
+            "ggml-medium-q5_0.bin"
+        ]
+        for name in candidates {
+            let url = modelsDirectory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+                if size > 10_000_000 { return url }
+            }
+        }
+        return nil
+    }
+
     func ensureModel() async throws {
         refreshStatus()
         if isReady { return }

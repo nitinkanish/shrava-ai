@@ -33,8 +33,8 @@ struct GeneralSettingsView: View {
             Section("Language") {
                 LanguagePicker(selection: $settings.language)
                 Text(settings.language == .auto
-                     ? "Shrava detects the language you speak each time. Pick a fixed language if words come out in the wrong one."
-                     : "Shrava always transcribes in \(settings.language.displayName). Choose Auto-detect to switch languages freely.")
+                     ? "Auto detects English or Hindi (including Hinglish) from the first ~30s of audio, then transcribes the whole recording in one pass. Pick a fixed language to force one."
+                     : "Shrava always transcribes in \(settings.language.displayName). Choose Auto (English/Hindi) for mixed meetings.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Writing") {
