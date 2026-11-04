@@ -159,6 +159,21 @@ public final class OllamaClient: @unchecked Sendable {
         return polished.isEmpty ? text : polished
     }
 
+    /// Optional Roman Hinglish transliteration after Whisper (Devanagari → Latin).
+    public func transliterateToRomanHinglish(_ text: String) async throws -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return text }
+        guard WhisperLanguageSupport.containsDevanagari(trimmed) else { return text }
+        let settings = AnalysisSettingsStore.load()
+        let messages = [
+            ChatMessage(role: "system", content: TranscriptionCleanup.romanHinglishSystemPrompt()),
+            ChatMessage(role: "user", content: TranscriptionCleanup.romanHinglishUserPrompt(trimmed))
+        ]
+        let out = try await chat(messages: messages, settings: settings, formatJSON: false, temperature: 0.1)
+        let roman = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        return roman.isEmpty ? text : roman
+    }
+
     public func analyzeMeeting(transcript: String, titleHint: String? = nil) async throws -> MeetingBrief {
         let settings = self.settings
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -40,9 +40,10 @@ struct GeneralSettingsView: View {
             Section("Writing") {
                 Toggle("Auto-cleanup (remove um, uh, repeats; fix capitals)", isOn: $settings.autoCleanup)
                 Toggle("Enhance transcript with Ollama (Hinglish polish)", isOn: $settings.enhanceTranscript)
+                Toggle("Roman Hinglish output (Ollama transliteration)", isOn: $settings.preferRomanHinglish)
                 Text(OllamaSecrets.hasAPIKey()
-                     ? "After Whisper, gpt-oss:120b-cloud fixes punctuation while keeping meaning. Uses your Meeting Brief key."
-                     : "Add an Ollama API key under Meeting Brief to enable cloud polish after on-device Whisper.")
+                     ? "After Whisper, gpt-oss:120b-cloud can polish punctuation and optionally transliterate Devanagari to Roman Hinglish. Uses your Meeting Brief key."
+                     : "Add an Ollama API key under Meeting Brief to enable cloud polish / Roman Hinglish after on-device Whisper.")
                     .font(.caption).foregroundStyle(.secondary)
                 Toggle("Show original text in History", isOn: $settings.showOriginalText)
             }

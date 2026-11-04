@@ -100,14 +100,39 @@ final class IOSWhisper: @unchecked Sendable {
         loadedModelPath = modelURL.path
     }
 
+    private func loadModelForLanguage(_ language: SupportedLanguage) async throws {
+        if language == .hindi || language == .auto {
+            try await WhisperModelManager.shared.ensureHindiCapableModel()
+        } else {
+            // English / other: use any installed model; do not force a turbo download.
+            await MainActor.run {
+                if !WhisperModelManager.shared.isReady,
+                   let any = WhisperModelManager.shared.bestInstalledOption(minRank: 0) {
+                    WhisperModelManager.shared.select(any)
+                }
+            }
+            let ready = await MainActor.run { WhisperModelManager.shared.isReady }
+            if !ready {
+                try await WhisperModelManager.shared.ensureModel()
+            }
+        }
+        guard let url = await MainActor.run(body: {
+            WhisperModelManager.shared.modelURLForTranscription(language: language)
+        }) else {
+            throw IOSWhisperError.modelMissing
+        }
+        let name = url.lastPathComponent
+        WhisperChunkLog.chunkLog.info("using model \(name, privacy: .public) for lang=\(language.rawValue, privacy: .public)")
+        try ensureLoaded(modelURL: url)
+    }
+
     func transcribe(
         audioData: Data,
         durationSeconds: Double,
         language: SupportedLanguage,
         dictionary: PersonalDictionary
     ) async throws -> TranscriptionResult {
-        let modelURL = await MainActor.run { WhisperModelManager.shared.modelURL }
-        try ensureLoaded(modelURL: modelURL)
+        try await loadModelForLanguage(language)
 
         let samples = try Self.pcmFloat32Mono16kHz(from: audioData)
         guard !samples.isEmpty else { throw IOSWhisperError.invalidAudio }
@@ -131,8 +156,7 @@ final class IOSWhisper: @unchecked Sendable {
         progress: @MainActor @escaping (Double) -> Void,
         partialText: (@MainActor (String) -> Void)? = nil
     ) async throws -> TranscriptionResult {
-        let modelURL = await MainActor.run { WhisperModelManager.shared.modelURL }
-        try ensureLoaded(modelURL: modelURL)
+        try await loadModelForLanguage(language)
 
         // Decode full file once for language detect + whole-pass attempt.
         let allSamples: [Float]
@@ -255,7 +279,9 @@ final class IOSWhisper: @unchecked Sendable {
         let alternate = WhisperLanguageSupport.otherAutoLanguage(than: language)
         WhisperChunkLog.chunkLog.warning("retry language \(language.rawValue, privacy: .public) -> \(alternate.rawValue, privacy: .public) chars=\(primary.text.count)")
         let secondary = try await runWhisperPass(samples: samples, language: alternate, allowEmpty: allowEmpty)
-        if secondary.averageLogProb > primary.averageLogProb || secondary.text.count > primary.text.count
+        let primaryScore = WhisperLanguageSupport.scoreTranscript(primary.text, averageLogProb: primary.averageLogProb)
+        let secondaryScore = WhisperLanguageSupport.scoreTranscript(secondary.text, averageLogProb: secondary.averageLogProb)
+        if secondaryScore > primaryScore
             || !WhisperLanguageSupport.needsRetry(text: secondary.text, durationSeconds: durationSeconds) {
             primary = secondary
         }
@@ -321,7 +347,7 @@ final class IOSWhisper: @unchecked Sendable {
             .appendingPathComponent("Shrava/models", isDirectory: true)
         let vadPath = modelsDir.appendingPathComponent("ggml-silero-v5.1.2.bin").path
         let useVad = FileManager.default.fileExists(atPath: vadPath)
-        let hinglishPrompt = "Hindi and English meeting discussion."
+        let hinglishPrompt = WhisperLanguageSupport.hinglishInitialPrompt
 
         let pair: (String, Double) = try language.withCString { langPtr in
             try hinglishPrompt.withCString { promptPtr in
@@ -663,6 +689,18 @@ final class IOSWhisper: @unchecked Sendable {
                 }
             } catch {
                 // Best-effort polish — keep Whisper text on failure.
+            }
+        }
+
+        if settings.preferRomanHinglish, OllamaSecrets.hasAPIKey(),
+           WhisperLanguageSupport.containsDevanagari(cleaned) {
+            do {
+                let roman = try await OllamaClient.shared.transliterateToRomanHinglish(cleaned)
+                if !roman.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = roman
+                }
+            } catch {
+                // Best-effort transliteration.
             }
         }
 

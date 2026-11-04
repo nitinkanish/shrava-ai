@@ -107,4 +107,30 @@ final class WhisperLanguageSupportTests: XCTestCase {
             )
         )
     }
+
+    func testResolveAutoHindiSoftThreshold() {
+        // p(hi) > 0.15 → Hindi even when English is top (Hinglish bias).
+        XCTAssertEqual(
+            WhisperLanguageSupport.resolveAuto(detectedCode: "en", enProbability: 0.70, hiProbability: 0.18),
+            .hindi
+        )
+        XCTAssertEqual(
+            WhisperLanguageSupport.resolveAuto(detectedCode: "en", enProbability: 0.90, hiProbability: 0.10),
+            .english
+        )
+    }
+
+    func testRepetitiveHallucination() {
+        let bad = String(repeating: "चाभा", count: 20)
+        XCTAssertTrue(WhisperLanguageSupport.isRepetitiveHallucination(bad))
+        XCTAssertTrue(WhisperLanguageSupport.needsRetry(text: bad, durationSeconds: 25))
+        XCTAssertFalse(WhisperLanguageSupport.isRepetitiveHallucination("आज हम reporting और order data पर बात करेंगे"))
+    }
+
+    func testScoreTranscriptPrefersDevanagari() {
+        let hi = WhisperLanguageSupport.scoreTranscript("आज हम customer order की बात करेंगे", averageLogProb: -0.4)
+        let en = WhisperLanguageSupport.scoreTranscript("Today we will talk about customer orders", averageLogProb: -0.4)
+        XCTAssertGreaterThan(hi, en)
+    }
+
 }

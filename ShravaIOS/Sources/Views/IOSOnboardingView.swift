@@ -106,14 +106,25 @@ struct IOSOnboardingView: View {
                     .padding(.horizontal)
             }
 
-            if !appState.modelReady {
+            if !appState.modelManager.isHindiCapable {
+                Text("Hindi/Auto needs Small or Large Turbo. Base alone will garble Hindi.")
+                    .font(.footnote)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+                Button(isDownloading ? "Downloading…" : "Download Large Turbo (recommended)") {
+                    Task { await downloadModel() }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isDownloading)
+            } else if !appState.modelReady {
                 Button(isDownloading ? "Downloading…" : "Download Model") {
                     Task { await downloadModel() }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(isDownloading)
             } else {
-                Label("Model ready", systemImage: "checkmark.circle.fill")
+                Label("Hindi-capable model ready", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             }
 
@@ -252,13 +263,13 @@ struct IOSOnboardingView: View {
                     withAnimation { currentStep += 1 }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(currentStep == 1 && !appState.modelReady)
+                .disabled(currentStep == 1 && !appState.modelManager.isHindiCapable)
             } else {
                 Button("Get Started") {
                     isPresented = false
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!appState.modelReady)
+                .disabled(!appState.modelManager.isHindiCapable)
             }
         }
         .padding()
@@ -267,6 +278,8 @@ struct IOSOnboardingView: View {
     private func downloadModel() async {
         isDownloading = true
         downloadError = nil
+        // Always pull the Hindi-capable recommended model during onboarding.
+        appState.modelManager.select(WhisperModelManager.shared.recommendedOption)
         do {
             try await appState.modelManager.downloadModelWithProgress()
             appState.refreshModelStatus()

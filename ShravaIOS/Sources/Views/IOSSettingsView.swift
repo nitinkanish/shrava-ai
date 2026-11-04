@@ -159,10 +159,16 @@ struct IOSSettingsView: View {
                 }
             }
             Text(settings.language == .auto
-                 ? "Auto detects English or Hindi (including Hinglish), then transcribes the whole recording in one pass."
+                 ? "Auto detects English or Hindi (including Hinglish), then transcribes the whole recording in one pass. Hindi stays sticky when you pick it explicitly."
                  : "Always transcribes in \(settings.language.displayName). Choose Auto (English/Hindi) for mixed meetings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if (settings.language == .hindi || settings.language == .auto),
+               !appState.modelManager.isHindiCapable {
+                Text("Base model cannot handle Hindi — download Small or Large Turbo below (auto on Wi‑Fi).")
+                    .font(.caption)
+                    .foregroundStyle(ShravaTheme.coral)
+            }
         } header: {
             Text("Transcription")
         }
@@ -173,17 +179,19 @@ struct IOSSettingsView: View {
         Section {
             Toggle("Auto-cleanup transcriptions", isOn: $settings.autoCleanup)
             Toggle("Enhance transcript (Ollama)", isOn: $settings.enhanceTranscript)
+            Toggle("Roman Hinglish (Ollama)", isOn: $settings.preferRomanHinglish)
             Toggle("Haptic feedback", isOn: $settings.hapticFeedback)
             Toggle("Sound feedback", isOn: $settings.soundFeedback)
         } header: {
             Text("Behavior")
         } footer: {
             Text(OllamaSecrets.hasAPIKey()
-                 ? "Enhance uses your Ollama key (gpt-oss:120b-cloud) to polish punctuation and Hinglish after Whisper. Off by default only when no key is saved."
-                 : "Enhance transcript needs an Ollama API key under Meeting Brief. It will turn on automatically once a key is saved.")
+                 ? "Enhance polishes punctuation; Roman Hinglish transliterates Devanagari via your Ollama key (gpt-oss:120b-cloud)."
+                 : "Enhance / Roman Hinglish need an Ollama API key under Meeting Brief.")
         }
         .onChange(of: settings.autoCleanup) { _, _ in saveSettings() }
         .onChange(of: settings.enhanceTranscript) { _, _ in saveSettings() }
+        .onChange(of: settings.preferRomanHinglish) { _, _ in saveSettings() }
         .onChange(of: settings.hapticFeedback) { _, _ in saveSettings() }
         .onChange(of: settings.soundFeedback) { _, _ in saveSettings() }
         .onAppear {

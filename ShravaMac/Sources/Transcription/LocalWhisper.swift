@@ -148,6 +148,18 @@ final class LocalWhisper: @unchecked Sendable {
             }
         }
 
+        if settings.preferRomanHinglish, OllamaSecrets.hasAPIKey(),
+           WhisperLanguageSupport.containsDevanagari(cleaned) {
+            do {
+                let roman = try await OllamaClient.shared.transliterateToRomanHinglish(cleaned)
+                if !roman.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = roman
+                }
+            } catch {
+                NSLog("Shrava: roman Hinglish skipped: \(error.localizedDescription)")
+            }
+        }
+
         return TranscriptionResult(
             originalText: original,
             cleanedText: cleaned,
@@ -244,7 +256,7 @@ final class LocalWhisper: @unchecked Sendable {
             "-tp", "0",
             "-tpi", "0.2",
             "--suppress-nst",
-            "--prompt", "Hindi and English meeting discussion."
+            "--prompt", WhisperLanguageSupport.hinglishInitialPrompt
         ]
         let vad = Self.modelsDirectory.appendingPathComponent("ggml-silero-v5.1.2.bin")
         if FileManager.default.fileExists(atPath: vad.path) {

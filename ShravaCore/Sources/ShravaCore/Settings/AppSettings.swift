@@ -75,6 +75,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var autoCleanup: Bool
     /// When true and an Ollama API key exists, polish the Whisper transcript via cloud model.
     public var enhanceTranscript: Bool
+    /// When true, optionally transliterate Devanagari Hinglish to Roman via Ollama after Whisper.
+    public var preferRomanHinglish: Bool
     public var showOriginalText: Bool
     public var hapticFeedback: Bool
     public var soundFeedback: Bool
@@ -93,6 +95,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             iCloudSyncEnabled: false,
             autoCleanup: true,
             enhanceTranscript: true,
+            preferRomanHinglish: false,
             showOriginalText: false,
             hapticFeedback: true,
             soundFeedback: true,
@@ -107,6 +110,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
             iCloudSyncEnabled: false,
             autoCleanup: true,
             enhanceTranscript: true,
+            preferRomanHinglish: false,
             showOriginalText: false,
             hapticFeedback: true,
             soundFeedback: true
@@ -119,6 +123,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         iCloudSyncEnabled: Bool = false,
         autoCleanup: Bool = true,
         enhanceTranscript: Bool = true,
+        preferRomanHinglish: Bool = false,
         showOriginalText: Bool = false,
         hapticFeedback: Bool = true,
         soundFeedback: Bool = true,
@@ -131,6 +136,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.iCloudSyncEnabled = iCloudSyncEnabled
         self.autoCleanup = autoCleanup
         self.enhanceTranscript = enhanceTranscript
+        self.preferRomanHinglish = preferRomanHinglish
         self.showOriginalText = showOriginalText
         self.hapticFeedback = hapticFeedback
         self.soundFeedback = soundFeedback
@@ -182,10 +188,10 @@ public final class SettingsManager: @unchecked Sendable {
 }
 
 
-#if os(macOS)
 extension AppSettings {
     enum CodingKeys: String, CodingKey {
-        case language, iCloudSyncEnabled, autoCleanup, enhanceTranscript, showOriginalText, hapticFeedback, soundFeedback
+        case language, iCloudSyncEnabled, autoCleanup, enhanceTranscript, preferRomanHinglish
+        case showOriginalText, hapticFeedback, soundFeedback
         case hotkeyModifiers, hotkeyKeyCode, handsFreeEnabled, useAccessibilityInsertion
     }
 
@@ -195,13 +201,33 @@ extension AppSettings {
         iCloudSyncEnabled = try c.decodeIfPresent(Bool.self, forKey: .iCloudSyncEnabled) ?? false
         autoCleanup = try c.decodeIfPresent(Bool.self, forKey: .autoCleanup) ?? true
         enhanceTranscript = try c.decodeIfPresent(Bool.self, forKey: .enhanceTranscript) ?? true
+        preferRomanHinglish = try c.decodeIfPresent(Bool.self, forKey: .preferRomanHinglish) ?? false
         showOriginalText = try c.decodeIfPresent(Bool.self, forKey: .showOriginalText) ?? false
         hapticFeedback = try c.decodeIfPresent(Bool.self, forKey: .hapticFeedback) ?? true
         soundFeedback = try c.decodeIfPresent(Bool.self, forKey: .soundFeedback) ?? true
+        #if os(macOS)
         hotkeyModifiers = try c.decodeIfPresent(UInt.self, forKey: .hotkeyModifiers) ?? 0
         hotkeyKeyCode = try c.decodeIfPresent(UInt16.self, forKey: .hotkeyKeyCode) ?? 61
         handsFreeEnabled = try c.decodeIfPresent(Bool.self, forKey: .handsFreeEnabled) ?? true
         useAccessibilityInsertion = try c.decodeIfPresent(Bool.self, forKey: .useAccessibilityInsertion) ?? true
+        #endif
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(language, forKey: .language)
+        try c.encode(iCloudSyncEnabled, forKey: .iCloudSyncEnabled)
+        try c.encode(autoCleanup, forKey: .autoCleanup)
+        try c.encode(enhanceTranscript, forKey: .enhanceTranscript)
+        try c.encode(preferRomanHinglish, forKey: .preferRomanHinglish)
+        try c.encode(showOriginalText, forKey: .showOriginalText)
+        try c.encode(hapticFeedback, forKey: .hapticFeedback)
+        try c.encode(soundFeedback, forKey: .soundFeedback)
+        #if os(macOS)
+        try c.encode(hotkeyModifiers, forKey: .hotkeyModifiers)
+        try c.encode(hotkeyKeyCode, forKey: .hotkeyKeyCode)
+        try c.encode(handsFreeEnabled, forKey: .handsFreeEnabled)
+        try c.encode(useAccessibilityInsertion, forKey: .useAccessibilityInsertion)
+        #endif
     }
 }
-#endif

@@ -7,37 +7,58 @@ struct ContentView: View {
     @Namespace private var glassNS
 
     var body: some View {
-        TabView(selection: $appState.currentTab) {
-            RecordingView()
-                .environmentObject(appState)
-                .tabItem { Label("Record", systemImage: "waveform.circle.fill") }
-                .tag(IOSAppState.Tab.record)
+        VStack(spacing: 0) {
+            if let banner = appState.modelManager.bannerMessage {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(banner)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if !appState.modelManager.isHindiCapable {
+                        Button("Settings") { appState.currentTab = .settings }
+                            .font(.footnote.weight(.semibold))
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color.orange.opacity(0.18))
+            }
 
-            IOSHistoryView()
-                .environmentObject(appState)
-                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
-                .tag(IOSAppState.Tab.history)
+            TabView(selection: $appState.currentTab) {
+                RecordingView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Record", systemImage: "waveform.circle.fill") }
+                    .tag(IOSAppState.Tab.record)
 
-            IOSDictionaryView()
-                .environmentObject(appState)
-                .tabItem { Label("Dictionary", systemImage: "character.book.closed.fill") }
-                .tag(IOSAppState.Tab.dictionary)
+                IOSHistoryView()
+                    .environmentObject(appState)
+                    .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                    .tag(IOSAppState.Tab.history)
 
-            IOSSettingsView()
-                .environmentObject(appState)
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
-                .tag(IOSAppState.Tab.settings)
+                IOSDictionaryView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Dictionary", systemImage: "character.book.closed.fill") }
+                    .tag(IOSAppState.Tab.dictionary)
+
+                IOSSettingsView()
+                    .environmentObject(appState)
+                    .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                    .tag(IOSAppState.Tab.settings)
+            }
+            .tint(ShravaTheme.purple)
+            .tabBarMinimizeBehavior(.onScrollDown)
+            .tabViewBottomAccessory(isEnabled: appState.currentTab != .record) {
+                FloatingRecordAccessory()
+                    .environmentObject(appState)
+            }
         }
-        .tint(ShravaTheme.purple)
         .preferredColorScheme(.dark)
-        .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory(isEnabled: appState.currentTab != .record) {
-            FloatingRecordAccessory()
-                .environmentObject(appState)
-        }
         .onAppear {
             checkOnboarding()
             appState.applyScreenshotTabIfNeeded()
+            appState.bootstrapModelUpgrade()
         }
         .sheet(isPresented: $showingOnboarding) {
             IOSOnboardingView(isPresented: $showingOnboarding)
@@ -47,7 +68,8 @@ struct ContentView: View {
 
     private func checkOnboarding() {
         appState.refreshModelStatus()
-        if !appState.modelReady || !appState.hasMicrophonePermission {
+        // Base-only installs look "ready" for English but Hindi fails — force model step.
+        if !appState.modelReady || !appState.modelManager.isHindiCapable || !appState.hasMicrophonePermission {
             showingOnboarding = true
         }
     }

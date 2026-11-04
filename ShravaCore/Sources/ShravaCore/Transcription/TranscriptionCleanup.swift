@@ -47,3 +47,19 @@ extension TranscriptionCleanup {
         "Polish this transcript:\n\n" + transcript
     }
 }
+
+
+extension TranscriptionCleanup {
+    public static func romanHinglishSystemPrompt() -> String {
+        """
+        You transliterate Hindi/Hinglish meeting transcripts into Roman (Latin) script Hinglish.
+        Keep English words as English. Convert Devanagari Hindi to natural Roman spellings Indians type
+        (e.g. "aaj hum meeting karenge", not formal IAST). Preserve meaning; do not summarize or invent.
+        Return ONLY the Roman Hinglish transcript — no preamble, no quotes, no markdown.
+        """
+    }
+
+    public static func romanHinglishUserPrompt(_ transcript: String) -> String {
+        "Transliterate to Roman Hinglish:\n\n" + transcript
+    }
+}

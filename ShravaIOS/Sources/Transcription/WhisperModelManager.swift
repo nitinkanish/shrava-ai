@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import ShravaCore
 
 /// Catalog entry for an on-device whisper.cpp ggml model (download-on-demand).
@@ -22,6 +23,9 @@ final class WhisperModelManager: ObservableObject {
     static let shared = WhisperModelManager()
 
     static let selectedModelKey = "shrava.selectedWhisperModel"
+    static let recommendedID = "large-v3-turbo-q5_0"
+    /// Base (rank 10) is too weak for Hindi/Auto — require small+.
+    static let minimumHindiQualityRank = 20
 
     /// Prefer large-v3-turbo on iPhone 17-class devices; fall back to small / base.
     static let catalog: [WhisperModelOption] = [
@@ -38,7 +42,7 @@ final class WhisperModelManager: ObservableObject {
             id: "small-q5_1",
             fileName: "ggml-small-q5_1.bin",
             displayName: "Small Q5_1",
-            detail: "Good multilingual balance (~181 MB).",
+            detail: "Good multilingual balance (~181 MB). Minimum for Hindi/Auto.",
             downloadURL: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin")!,
             expectedByteCount: 190_085_487,
             qualityRank: 20
@@ -47,7 +51,7 @@ final class WhisperModelManager: ObservableObject {
             id: "base-q5_1",
             fileName: "ggml-base-q5_1.bin",
             displayName: "Base Q5_1",
-            detail: "Fast / small (~57 MB). Use when storage is tight.",
+            detail: "Fast / small (~57 MB). English-only fallback — not used for Hindi/Auto.",
             downloadURL: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin")!,
             expectedByteCount: 59_707_625,
             qualityRank: 10
@@ -67,12 +71,16 @@ final class WhisperModelManager: ObservableObject {
 
     @Published private(set) var status: Status = .missing
     @Published private(set) var downloadProgress: Double = 0
+    @Published private(set) var bannerMessage: String?
+    @Published private(set) var isOnWiFi = false
     @Published var selectedModelID: String {
         didSet { UserDefaults.standard.set(selectedModelID, forKey: Self.selectedModelKey) }
     }
 
     private var downloadTask: URLSessionDownloadTask?
     private var observation: NSKeyValueObservation?
+    private let pathMonitor = NWPathMonitor()
+    private var autoUpgradeStarted = false
 
     var modelsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -83,6 +91,10 @@ final class WhisperModelManager: ObservableObject {
 
     var selectedOption: WhisperModelOption {
         Self.catalog.first { $0.id == selectedModelID } ?? Self.catalog[0]
+    }
+
+    var recommendedOption: WhisperModelOption {
+        Self.catalog.first { $0.id == Self.recommendedID } ?? Self.catalog[0]
     }
 
     var modelURL: URL {
@@ -105,6 +117,11 @@ final class WhisperModelManager: ObservableObject {
         return false
     }
 
+    /// True when an installed model meets Hindi/Auto quality (small+).
+    var isHindiCapable: Bool {
+        bestInstalledOption(minRank: Self.minimumHindiQualityRank) != nil
+    }
+
     var modelByteCount: Int64? {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: modelURL.path),
               let size = attrs[.size] as? Int64 else { return nil }
@@ -125,21 +142,49 @@ final class WhisperModelManager: ObservableObject {
            Self.catalog.contains(where: { $0.id == saved }) {
             selectedModelID = saved
         } else {
-            // Prefer best already-downloaded model; else recommend turbo.
-            selectedModelID = Self.bestInstalledID(in: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Shrava/models", isDirectory: true)) ?? "large-v3-turbo-q5_0"
+            // Always recommend turbo until the user explicitly picks another size.
+            // (Previously bestInstalled preferred base and skipped the turbo download.)
+            selectedModelID = Self.recommendedID
         }
         refreshStatus()
+        startPathMonitor()
+        refreshBanner()
     }
 
-    private static func bestInstalledID(in dir: URL) -> String? {
-        let installed = catalog.compactMap { opt -> (WhisperModelOption, Int64)? in
+    private func startPathMonitor() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isOnWiFi = path.status == .satisfied && path.usesInterfaceType(.wifi)
+                self.refreshBanner()
+                if self.isOnWiFi {
+                    self.startAutoUpgradeIfNeeded()
+                }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "com.shrava.ios.model-path"))
+    }
+
+    private static func bestInstalledID(in dir: URL, minRank: Int = 0) -> String? {
+        bestInstalledOption(in: dir, minRank: minRank)?.id
+    }
+
+    private static func bestInstalledOption(in dir: URL, minRank: Int) -> WhisperModelOption? {
+        let installed = catalog.compactMap { opt -> WhisperModelOption? in
+            guard opt.qualityRank >= minRank else { return nil }
             let url = dir.appendingPathComponent(opt.fileName)
             guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value,
                   size > 1_000_000 else { return nil }
-            return (opt, size)
+            let expected = opt.expectedByteCount
+            let tol = max(2_000_000, expected / 50)
+            guard abs(size - expected) <= tol || size > expected - tol else { return nil }
+            return opt
         }
-        return installed.max(by: { $0.0.qualityRank < $1.0.qualityRank })?.0.id
+        return installed.max(by: { $0.qualityRank < $1.qualityRank })
+    }
+
+    func bestInstalledOption(minRank: Int = 0) -> WhisperModelOption? {
+        Self.bestInstalledOption(in: modelsDirectory, minRank: minRank)
     }
 
     private func isValidModelSize(_ bytes: Int64, for option: WhisperModelOption) -> Bool {
@@ -168,6 +213,32 @@ final class WhisperModelManager: ObservableObject {
             status = .missing
             downloadProgress = 0
         }
+        refreshBanner()
+    }
+
+    func refreshBanner() {
+        if case .downloading(let p) = status {
+            bannerMessage = "Downloading \(selectedOption.displayName)… \(Int(p * 100))%"
+            return
+        }
+        if !isHindiCapable {
+            if isOnWiFi {
+                bannerMessage = "Hindi needs Small or Large Turbo — downloading best model on Wi‑Fi…"
+            } else {
+                bannerMessage = "Hindi/Auto needs Small+ model. Connect to Wi‑Fi to auto-download Large Turbo (~547 MB), or download Small in Settings."
+            }
+            return
+        }
+        if selectedOption.qualityRank < Self.minimumHindiQualityRank,
+           let better = bestInstalledOption(minRank: Self.minimumHindiQualityRank) {
+            bannerMessage = "Base model is weak for Hindi — using \(better.displayName)."
+            return
+        }
+        if !isInstalled(recommendedOption), isOnWiFi {
+            bannerMessage = "Recommended: download Large v3 Turbo for best Hindi/English quality."
+            return
+        }
+        bannerMessage = nil
     }
 
     func isInstalled(_ option: WhisperModelOption) -> Bool {
@@ -185,6 +256,26 @@ final class WhisperModelManager: ObservableObject {
         refreshStatus()
     }
 
+    /// Model file used for a transcription. Refuses base for Hindi/Auto (uses best small+).
+    func modelURLForTranscription(language: SupportedLanguage) -> URL? {
+        let needsHindi = language == .hindi || language == .auto
+        if needsHindi {
+            if let best = bestInstalledOption(minRank: Self.minimumHindiQualityRank) {
+                if selectedOption.qualityRank < Self.minimumHindiQualityRank {
+                    selectedModelID = best.id
+                    refreshStatus()
+                }
+                return modelsDirectory.appendingPathComponent(best.fileName)
+            }
+            return nil
+        }
+        if isReady { return modelURL }
+        if let any = bestInstalledOption(minRank: 0) {
+            return modelsDirectory.appendingPathComponent(any.fileName)
+        }
+        return nil
+    }
+
     /// Optional larger ggml than the currently selected one (for hallucination retries).
     func largerModelURLIfAvailable() -> URL? {
         let currentRank = selectedOption.qualityRank
@@ -194,7 +285,6 @@ final class WhisperModelManager: ObservableObject {
         if let best = better.first {
             return modelsDirectory.appendingPathComponent(best.fileName)
         }
-        // Also accept ad-hoc medium if present.
         for name in ["ggml-medium-q5_0.bin", "ggml-medium.bin"] {
             let url = modelsDirectory.appendingPathComponent(name)
             let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
@@ -203,10 +293,73 @@ final class WhisperModelManager: ObservableObject {
         return nil
     }
 
+    /// On Wi‑Fi: download Large Turbo (or at least Small) when Hindi-capable model is missing.
+    func startAutoUpgradeIfNeeded() {
+        guard !autoUpgradeStarted else { return }
+        if case .downloading = status { return }
+        guard isOnWiFi else { return }
+
+        if isInstalled(recommendedOption) {
+            if selectedModelID != recommendedOption.id && selectedOption.qualityRank < recommendedOption.qualityRank {
+                select(recommendedOption)
+            }
+            Task { await downloadVadIfNeeded() }
+            refreshBanner()
+            return
+        }
+
+        autoUpgradeStarted = true
+        let target: WhisperModelOption
+        if !isHindiCapable {
+            // Prefer turbo on Wi‑Fi; Small is the Hindi floor if turbo fails later.
+            target = recommendedOption
+        } else if selectedOption.qualityRank < recommendedOption.qualityRank {
+            target = recommendedOption
+        } else {
+            autoUpgradeStarted = false
+            return
+        }
+        select(target)
+        bannerMessage = "Downloading \(target.displayName) on Wi‑Fi for Hindi/English…"
+        Task {
+            do {
+                try await downloadModelWithProgress()
+                refreshBanner()
+            } catch {
+                // Fall back to Small if Turbo fails and Hindi still unsupported.
+                if !isHindiCapable, let small = Self.catalog.first(where: { $0.id == "small-q5_1" }) {
+                    select(small)
+                    try? await downloadModelWithProgress()
+                }
+                refreshBanner()
+            }
+            autoUpgradeStarted = false
+        }
+    }
+
     func ensureModel() async throws {
         refreshStatus()
         if isReady { return }
         try await downloadModelWithProgress()
+    }
+
+    /// Ensure a Hindi-capable model exists before transcription; auto-download Small on any network if needed.
+    func ensureHindiCapableModel() async throws {
+        if isHindiCapable {
+            if let best = bestInstalledOption(minRank: Self.minimumHindiQualityRank) {
+                select(best)
+            }
+            return
+        }
+        // Prefer turbo when on Wi‑Fi; otherwise Small (faster / smaller cellular pull).
+        let target = isOnWiFi ? recommendedOption : (Self.catalog.first { $0.id == "small-q5_1" } ?? recommendedOption)
+        select(target)
+        bannerMessage = "Downloading \(target.displayName) — required for Hindi…"
+        try await downloadModelWithProgress()
+        refreshBanner()
+        guard isHindiCapable else {
+            throw URLError(.cannotOpenFile)
+        }
     }
 
     func downloadModel() async throws {
@@ -219,10 +372,10 @@ final class WhisperModelManager: ObservableObject {
         try await download(from: option.downloadURL, to: destination, expected: option.expectedByteCount)
         refreshStatus()
         guard isReady else { throw URLError(.cannotOpenFile) }
-        // Best-effort VAD model (tiny) — improves silence skipping.
         if !isVadReady {
             try? await download(from: Self.vadDownloadURL, to: vadModelURL, expected: Self.vadExpectedByteCount, trackProgress: false)
         }
+        refreshBanner()
     }
 
     func downloadVadIfNeeded() async {
@@ -234,18 +387,21 @@ final class WhisperModelManager: ObservableObject {
         if trackProgress {
             status = .downloading(progress: 0)
             downloadProgress = 0
+            refreshBanner()
         }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let task = URLSession.shared.downloadTask(with: url) { [weak self] temp, response, error in
                 Task { @MainActor in
                     if let error {
                         if trackProgress { self?.status = .failed(error.localizedDescription) }
+                        self?.refreshBanner()
                         cont.resume(throwing: error)
                         return
                     }
                     guard let temp else {
                         let err = URLError(.badServerResponse)
                         if trackProgress { self?.status = .failed(err.localizedDescription) }
+                        self?.refreshBanner()
                         cont.resume(throwing: err)
                         return
                     }
@@ -263,9 +419,11 @@ final class WhisperModelManager: ObservableObject {
                             self?.downloadProgress = 1
                             self?.status = .ready
                         }
+                        self?.refreshBanner()
                         cont.resume()
                     } catch {
                         if trackProgress { self?.status = .failed(error.localizedDescription) }
+                        self?.refreshBanner()
                         cont.resume(throwing: error)
                     }
                 }
@@ -276,6 +434,7 @@ final class WhisperModelManager: ObservableObject {
                     Task { @MainActor in
                         self?.downloadProgress = prog.fractionCompleted
                         self?.status = .downloading(progress: prog.fractionCompleted)
+                        self?.refreshBanner()
                     }
                 }
             }

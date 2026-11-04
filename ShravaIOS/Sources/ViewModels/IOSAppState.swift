@@ -65,7 +65,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         dictionary = PersonalDictionary(storageURL: ShravaCore.dictionaryStorageURL())
         historyManager = HistoryManager(storageURL: ShravaCore.historyStorageURL())
 
-        modelReady = modelManager.isReady
+        modelReady = modelManager.isReady || modelManager.bestInstalledOption(minRank: 0) != nil
         setupCloudSync()
         setupAudioSession()
         registerIntentExecutor()
@@ -74,6 +74,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         observeLifecycleForResume()
         registerContinuedProcessingTask()
         Task { @MainActor in
+            self.bootstrapModelUpgrade()
             // Drop orphaned/stale Live Activities from killed sessions so they
             // cannot stick around showing a failed/error chrome.
             await self.endAllLiveActivities(reason: "launch-cleanup")
@@ -428,7 +429,15 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
 
     func refreshModelStatus() {
         modelManager.refreshStatus()
-        modelReady = modelManager.isReady
+        // Any installed ggml unlocks recording; Hindi still banners until Small+.
+        modelReady = modelManager.isReady || modelManager.bestInstalledOption(minRank: 0) != nil
+        modelManager.refreshBanner()
+    }
+
+    /// Kick Wi‑Fi auto-download of Large Turbo / Small when Hindi is unsupported.
+    func bootstrapModelUpgrade() {
+        refreshModelStatus()
+        modelManager.startAutoUpgradeIfNeeded()
     }
 
     /// Keyboard / in-app URL (`shrava://record`) when the app is opened.
@@ -1029,7 +1038,7 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         showingResult = false
         isProcessing = true
         transcriptionProgress = 0
-        debugLog("TRANSCRIBE begin id=\(entryID.uuidString) file=\(fileName) dur=\(String(format: "%.1f", durationSeconds))")
+        debugLog("TRANSCRIBE begin id=\(entryID.uuidString) file=\(fileName) dur=\(String(format: "%.1f", durationSeconds)) lang=\(SettingsManager.shared.settings.language.rawValue) model=\(modelManager.selectedOption.fileName) hindiCapable=\(modelManager.isHindiCapable)")
 
         beginTranscribeBackgroundWork(title: "Transcribing", subtitle: formatDurationLabel(durationSeconds))
 
@@ -1054,7 +1063,8 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                 }
             )
             await finishTranscription(result, replacing: entryID, audioFileName: fileName)
-            debugLog("TRANSCRIBE ok id=\(entryID.uuidString) chars=\(result.cleanedText.count)")
+            let preview = String(result.cleanedText.prefix(80)).replacingOccurrences(of: "\n", with: " ")
+            debugLog("TRANSCRIBE ok id=\(entryID.uuidString) chars=\(result.cleanedText.count) lang=\(result.language.rawValue) model=\(modelManager.selectedOption.fileName) preview=\(preview)")
             // Success only — never surface transient chunk errors on the Live Activity.
             await markLiveActivitySaved()
             endTranscribeBackgroundWork(success: true)

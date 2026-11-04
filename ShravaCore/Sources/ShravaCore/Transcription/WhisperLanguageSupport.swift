@@ -26,19 +26,29 @@ public enum WhisperLanguageSupport: Sendable {
         return raw.compactMap { try? NSRegularExpression(pattern: $0, options: [.caseInsensitive]) }
     }()
 
+    /// Shared whisper.cpp initial prompt (Mac whisper-cli + iOS XCFramework).
+    public static let hinglishInitialPrompt = "यह हिंदी और English में एक मीटिंग है। Hindi and English meeting discussion."
+
+    /// Hindi bias threshold: whisper auto often under-scores Hinglish as English.
+    public static let hindiProbabilityThreshold: Double = 0.15
+
     /// Prefer Hindi for mixed / ambiguous Hinglish; otherwise pick the stronger of en/hi.
+    /// If p(hi) > 0.15, choose Hindi even when English is the top code (Hinglish bias).
     public static func resolveAuto(detectedCode: String?, enProbability: Double? = nil, hiProbability: Double? = nil) -> SupportedLanguage {
         let code = (detectedCode ?? "").lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let enP = enProbability ?? (code == "en" || code.hasPrefix("en") ? 1.0 : 0.0)
         let hiP = hiProbability ?? (code == "hi" || code.hasPrefix("hi") ? 1.0 : 0.0)
 
-        if let enProbability, let hiProbability {
-            let delta = abs(enProbability - hiProbability)
-            // Close scores → mixed / Hinglish → Hindi handles Devanagari + Latin better.
+        if enProbability != nil || hiProbability != nil {
+            // Soft Hindi floor — catches Hinglish mislabeled as English.
+            if hiP > hindiProbabilityThreshold {
+                return .hindi
+            }
+            let delta = abs(enP - hiP)
             if delta < 0.15 {
                 return .hindi
             }
-            return hiProbability >= enProbability ? .hindi : .english
+            return hiP >= enP ? .hindi : .english
         }
 
         switch code {
@@ -140,7 +150,60 @@ public enum WhisperLanguageSupport: Sendable {
     }
 
     public static func needsRetry(text: String, durationSeconds: Double) -> Bool {
-        isMostlyPlaceholders(text) || isTooShortRelativeToDuration(text, durationSeconds: durationSeconds)
+        isMostlyPlaceholders(text)
+            || isTooShortRelativeToDuration(text, durationSeconds: durationSeconds)
+            || isRepetitiveHallucination(text)
+    }
+
+    /// Base-model Hindi often collapses into short repeating Devanagari syllables (e.g. चाभाभा…).
+    public static func isRepetitiveHallucination(_ text: String) -> Bool {
+        let filtered = filterHallucinations(text)
+        guard filtered.count >= 24 else { return false }
+        let unique = Set(filtered.unicodeScalars.map { $0.value })
+        if unique.count <= 8 { return true }
+        // Same 2–4 character window repeating heavily.
+        let chars = Array(filtered)
+        guard chars.count >= 12 else { return false }
+        for window in 2...4 {
+            var counts: [String: Int] = [:]
+            var i = 0
+            while i + window <= chars.count {
+                let key = String(chars[i..<i + window])
+                counts[key, default: 0] += 1
+                i += window
+            }
+            if let top = counts.values.max(), top >= 8, Double(top) * Double(window) >= Double(chars.count) * 0.55 {
+                return true
+            }
+        }
+        return false
+    }
+
+    public static func devanagariRatio(_ text: String) -> Double {
+        let filtered = filterHallucinations(text)
+        guard !filtered.isEmpty else { return 0 }
+        var letters = 0
+        var dev = 0
+        for scalar in filtered.unicodeScalars {
+            let v = scalar.value
+            let isDev = (0x0900...0x097F).contains(v)
+            let isLatin = (0x41...0x5A).contains(v) || (0x61...0x7A).contains(v)
+            if isDev || isLatin {
+                letters += 1
+                if isDev { dev += 1 }
+            }
+        }
+        guard letters > 0 else { return 0 }
+        return Double(dev) / Double(letters)
+    }
+
+    /// Combine whisper avg token logprob with Devanagari presence for dual-pass selection.
+    public static func scoreTranscript(_ text: String, averageLogProb: Double) -> Double {
+        let filtered = filterHallucinations(text)
+        if filtered.isEmpty || isRepetitiveHallucination(filtered) { return -100 }
+        let lengthBonus = min(1.0, Double(filtered.count) / 100.0) * 0.25
+        let scriptBonus = devanagariRatio(filtered) * 0.55
+        return averageLogProb + lengthBonus + scriptBonus
     }
 
     public static func otherAutoLanguage(than language: SupportedLanguage) -> SupportedLanguage {
