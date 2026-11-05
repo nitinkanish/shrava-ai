@@ -13,8 +13,49 @@ enum LocalWhisperError: LocalizedError {
     }
 }
 
+private final class LocalWhisperRunGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var busy = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        lock.lock()
+        if !busy {
+            busy = true
+            lock.unlock()
+            return
+        }
+        lock.unlock()
+        await withCheckedContinuation { cont in
+            lock.lock()
+            if busy {
+                waiters.append(cont)
+                lock.unlock()
+            } else {
+                busy = true
+                lock.unlock()
+                cont.resume()
+            }
+        }
+    }
+
+    func release() {
+        lock.lock()
+        if let next = waiters.first {
+            waiters.removeFirst()
+            lock.unlock()
+            next.resume()
+        } else {
+            busy = false
+            lock.unlock()
+        }
+    }
+}
+
 final class LocalWhisper: @unchecked Sendable {
     static let shared = LocalWhisper()
+    /// Cap concurrent whisper-cli invocations (regenerate must not stack).
+    private let runGate = LocalWhisperRunGate()
 
     static var modelsDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -53,6 +94,9 @@ final class LocalWhisper: @unchecked Sendable {
     }
 
     func transcribe(audioData: Data, durationSeconds: Double, language: SupportedLanguage, dictionary: PersonalDictionary, existingURL: URL? = nil) async throws -> TranscriptionResult {
+        await runGate.acquire()
+        defer { runGate.release() }
+
         guard let bin = binaryPath else { throw LocalWhisperError.binaryMissing }
         let models = Self.availableModels()
         guard let primaryModel = models.first else {
@@ -66,6 +110,20 @@ final class LocalWhisper: @unchecked Sendable {
         } else {
             wav = Self.recordingsDirectory.appendingPathComponent(UUID().uuidString + ".wav")
             try audioData.write(to: wav)
+        }
+
+        if durationSeconds >= TranscriptChunkScheduler.longMeetingThresholdSeconds {
+            NSLog("Shrava: long-meeting Mac path dur=%.1fs — overlapping windows", durationSeconds)
+            return try await transcribeLongFile(
+                bin: bin,
+                model: models.first!,
+                wav: wav,
+                durationSeconds: durationSeconds,
+                language: language,
+                dictionary: dictionary,
+                progress: nil,
+                partialText: nil
+            )
         }
 
         let resolved = try await resolveLanguage(
@@ -207,7 +265,162 @@ final class LocalWhisper: @unchecked Sendable {
     }
 
 
-    /// Split long/mixed audio into ~12s windows and decode each with auto language (recovers Hinglish).
+    /// Re-run Whisper on an existing recording (History regenerate). Keeps the WAV/m4a on disk.
+    func transcribeExistingFile(
+        url: URL,
+        durationSeconds: Double,
+        language: SupportedLanguage,
+        dictionary: PersonalDictionary,
+        progress: (@MainActor (Double) -> Void)? = nil,
+        partialText: (@MainActor (String) -> Void)? = nil
+    ) async throws -> TranscriptionResult {
+        guard let bin = binaryPath else { throw LocalWhisperError.binaryMissing }
+        let models = Self.availableModels()
+        guard let primaryModel = models.first else {
+            throw LocalWhisperError.modelMissing(Self.modelsDirectory.path)
+        }
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw LocalWhisperError.failed("Audio file missing")
+        }
+        if durationSeconds >= TranscriptChunkScheduler.longMeetingThresholdSeconds
+            || url.pathExtension.lowercased() != "wav" {
+            await runGate.acquire()
+            defer { runGate.release() }
+            return try await transcribeLongFile(
+                bin: bin,
+                model: primaryModel,
+                wav: url,
+                durationSeconds: durationSeconds,
+                language: language,
+                dictionary: dictionary,
+                progress: progress,
+                partialText: partialText
+            )
+        }
+        // Short WAV: standard pipeline (owns the gate).
+        return try await transcribe(
+            audioData: Data(),
+            durationSeconds: durationSeconds,
+            language: language,
+            dictionary: dictionary,
+            existingURL: url
+        )
+    }
+
+    /// Stream overlapping 5–10 min windows for multi-hour meetings (full file kept on disk).
+    private func transcribeLongFile(
+        bin: String,
+        model: URL,
+        wav: URL,
+        durationSeconds: Double,
+        language: SupportedLanguage,
+        dictionary: PersonalDictionary,
+        progress: (@MainActor (Double) -> Void)?,
+        partialText: (@MainActor (String) -> Void)?
+    ) async throws -> TranscriptionResult {
+        let resolved = try await resolveLanguage(
+            bin: bin,
+            model: model,
+            wav: wav,
+            requested: language,
+            durationSeconds: min(durationSeconds, 30)
+        )
+        await progress?(0.02)
+
+        let workURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-long-canonical.wav")
+        defer { try? FileManager.default.removeItem(at: workURL) }
+        if wav.pathExtension.lowercased() == "wav" {
+            try Self.canonicalizePCM16MonoWAV(from: wav, to: workURL)
+        } else {
+            try await Self.convertToWAV16kMono(from: wav, to: workURL)
+        }
+
+        let data = try Data(contentsOf: workURL)
+        let header = 44
+        let bytesPerSecond = 32_000
+        let totalPCM = max(0, data.count - header)
+        let totalFrames = Int64(totalPCM / 2) // 16-bit mono
+        let ranges = TranscriptChunkScheduler.overlappingFrameRanges(
+            totalFrames: totalFrames,
+            sampleRate: 16_000,
+            windowSeconds: TranscriptChunkScheduler.longMeetingWindowSeconds,
+            overlapSeconds: TranscriptChunkScheduler.longMeetingOverlapSeconds
+        )
+        NSLog("Shrava: long-meeting windows=%d window=%.0fs", ranges.count, TranscriptChunkScheduler.longMeetingWindowSeconds)
+
+        var parts: [String] = []
+        for (idx, range) in ranges.enumerated() {
+            let byteStart = header + Int(range.start) * 2
+            let byteCount = Int(range.count) * 2
+            let end = min(data.count, byteStart + byteCount)
+            guard byteStart < data.count else { continue }
+            let pcm = data[byteStart..<end]
+            var chunk = Data()
+            chunk.append(contentsOf: data.prefix(header))
+            chunk.append(pcm)
+            let dataSize = UInt32(chunk.count - header).littleEndian
+            let fileSize = UInt32(chunk.count - 8).littleEndian
+            withUnsafeBytes(of: fileSize) { chunk.replaceSubrange(4..<8, with: $0) }
+            withUnsafeBytes(of: dataSize) { chunk.replaceSubrange(40..<44, with: $0) }
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("shrava-long-\(idx).wav")
+            try chunk.write(to: tmp)
+            defer { try? FileManager.default.removeItem(at: tmp) }
+
+            let code = language == .auto ? "auto" : resolved.rawValue
+            let raw = try await runWhisper(bin: bin, model: model, wav: tmp, languageCode: code)
+            let text = Self.cleanRawOutput(raw)
+            if !text.isEmpty { parts.append(text) }
+            let joined = TranscriptChunkScheduler.stitchChunkTexts(parts)
+            await partialText?(joined)
+            await progress?(min(0.99, Double(idx + 1) / Double(max(1, ranges.count))))
+        }
+
+        var original = TranscriptChunkScheduler.stitchChunkTexts(parts)
+        if original.isEmpty {
+            throw LocalWhisperError.failed("Empty transcript from long-meeting windows")
+        }
+
+        var cleaned = original
+        if SettingsManager.shared.settings.autoCleanup { cleaned = TranscriptionCleanup.localCleanup(cleaned) }
+        cleaned = await dictionary.applyCorrections(to: cleaned)
+
+        let settings = SettingsManager.shared.settings
+        if settings.enhanceTranscript, OllamaSecrets.hasAPIKey() {
+            do {
+                let hint = resolved == .hindi || language == .auto ? "Hindi and English" : resolved.displayName
+                let enhanced = try await OllamaClient.shared.enhanceTranscript(cleaned, languageHint: hint)
+                if !enhanced.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = enhanced
+                }
+            } catch {
+                NSLog("Shrava: enhance transcript skipped: \(error.localizedDescription)")
+            }
+        }
+        if settings.preferRomanHinglish, OllamaSecrets.hasAPIKey(),
+           WhisperLanguageSupport.containsDevanagari(cleaned) {
+            do {
+                let roman = try await OllamaClient.shared.transliterateToRomanHinglish(cleaned)
+                if !roman.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    cleaned = roman
+                }
+            } catch {
+                NSLog("Shrava: roman Hinglish skipped: \(error.localizedDescription)")
+            }
+        }
+
+        await progress?(1)
+        return TranscriptionResult(
+            originalText: original,
+            cleanedText: cleaned,
+            language: language == .auto
+                ? (WhisperLanguageSupport.containsDevanagari(original) ? .hindi : resolved)
+                : resolved,
+            durationSeconds: durationSeconds,
+            audioFileName: wav.lastPathComponent
+        )
+    }
+
+    /// Split mixed audio into short windows (Hinglish recovery for medium clips).
     private func transcribeChunked(bin: String, model: URL, wav: URL, languageCode: String) async throws -> String {
         let data = try Data(contentsOf: wav)
         let header = 44
@@ -240,7 +453,91 @@ final class LocalWhisper: @unchecked Sendable {
             offset = end
             index += 1
         }
-        return parts.joined(separator: " ")
+        return TranscriptChunkScheduler.stitchChunkTexts(parts)
+    }
+
+    private static func convertToWAV16kMono(from source: URL, to dest: URL) async throws {
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "-afc.wav")
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/afconvert")
+            p.arguments = [
+                source.path,
+                tmp.path,
+                "-f", "WAVE",
+                "-d", "LEI16@16000",
+                "-c", "1"
+            ]
+            p.terminationHandler = { proc in
+                if proc.terminationStatus == 0 {
+                    cont.resume()
+                } else {
+                    cont.resume(throwing: LocalWhisperError.failed("afconvert failed (\(proc.terminationStatus))"))
+                }
+            }
+            do { try p.run() } catch { cont.resume(throwing: error) }
+        }
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        // afconvert emits extensible fmt + padding chunks — rewrite a clean 44-byte PCM WAV
+        // so byte-window slicing in transcribeLongFile stays aligned.
+        try canonicalizePCM16MonoWAV(from: tmp, to: dest)
+    }
+
+    /// Locate the `data` chunk and rewrite as classic PCM16 mono WAV (44-byte header).
+    private static func canonicalizePCM16MonoWAV(from source: URL, to dest: URL) throws {
+        let data = try Data(contentsOf: source)
+        guard data.count > 44, data.prefix(4) == Data("RIFF".utf8), data[8..<12] == Data("WAVE".utf8) else {
+            throw LocalWhisperError.failed("Invalid WAV from afconvert")
+        }
+        var pos = 12
+        var pcm: Data?
+        var sampleRate: UInt32 = 16_000
+        var channels: UInt16 = 1
+        var bits: UInt16 = 16
+        while pos + 8 <= data.count {
+            let id = String(data: data[pos..<pos+4], encoding: .ascii) ?? ""
+            let size = Int(data.subdata(in: (pos+4)..<(pos+8)).withUnsafeBytes { $0.load(as: UInt32.self).littleEndian })
+            let payloadStart = pos + 8
+            let payloadEnd = min(data.count, payloadStart + size)
+            if id == "fmt ", size >= 16 {
+                channels = data.subdata(in: (payloadStart+2)..<(payloadStart+4)).withUnsafeBytes { $0.load(as: UInt16.self).littleEndian }
+                sampleRate = data.subdata(in: (payloadStart+4)..<(payloadStart+8)).withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+                bits = data.subdata(in: (payloadStart+14)..<(payloadStart+16)).withUnsafeBytes { $0.load(as: UInt16.self).littleEndian }
+            } else if id == "data" {
+                pcm = data.subdata(in: payloadStart..<payloadEnd)
+                break
+            }
+            pos = payloadStart + size + (size % 2)
+        }
+        guard let pcm, !pcm.isEmpty else {
+            throw LocalWhisperError.failed("WAV missing data chunk")
+        }
+        var out = Data()
+        out.append(contentsOf: "RIFF".utf8)
+        var fileSize = UInt32(36 + pcm.count).littleEndian
+        withUnsafeBytes(of: &fileSize) { out.append(contentsOf: $0) }
+        out.append(contentsOf: "WAVEfmt ".utf8)
+        var fmtSize: UInt32 = 16
+        var audioFormat: UInt16 = 1
+        var blockAlign = UInt16(channels * bits / 8)
+        var byteRate = UInt32(sampleRate) * UInt32(blockAlign)
+        var ch = channels.littleEndian
+        var sr = sampleRate.littleEndian
+        var br = byteRate.littleEndian
+        var ba = blockAlign.littleEndian
+        var bps = bits.littleEndian
+        withUnsafeBytes(of: &fmtSize) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &audioFormat) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &ch) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &sr) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &br) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &ba) { out.append(contentsOf: $0) }
+        withUnsafeBytes(of: &bps) { out.append(contentsOf: $0) }
+        out.append(contentsOf: "data".utf8)
+        var dataSize = UInt32(pcm.count).littleEndian
+        withUnsafeBytes(of: &dataSize) { out.append(contentsOf: $0) }
+        out.append(pcm)
+        try out.write(to: dest, options: .atomic)
     }
 
     private func runWhisper(bin: String, model: URL, wav: URL, languageCode: String) async throws -> String {

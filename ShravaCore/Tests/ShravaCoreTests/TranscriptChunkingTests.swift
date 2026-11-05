@@ -35,4 +35,33 @@ final class TranscriptChunkingTests: XCTestCase {
         XCTAssertEqual(ranges.count, 3)
         XCTAssertEqual(ranges.map(\.count).reduce(0, +), 48_000)
     }
+
+    func testOverlappingWindowsStep() {
+        // 16 kHz, 30s window, 5s overlap → step 25s. 70s audio = 70*16000 frames.
+        let total: Int64 = 70 * 16_000
+        let ranges = TranscriptChunkScheduler.overlappingFrameRanges(
+            totalFrames: total,
+            sampleRate: 16_000,
+            windowSeconds: 30,
+            overlapSeconds: 5
+        )
+        XCTAssertEqual(ranges.count, 3)
+        XCTAssertEqual(ranges[0].start, 0)
+        XCTAssertEqual(ranges[0].count, 30 * 16_000)
+        XCTAssertEqual(ranges[1].start, 25 * 16_000)
+        XCTAssertEqual(ranges.last!.start + ranges.last!.count, total)
+    }
+
+    func testStitchDropsOverlapWords() {
+        let a = "one two three four five six"
+        let b = "four five six seven eight"
+        let joined = TranscriptChunkScheduler.stitchChunkTexts([a, b], overlapWordHint: 8)
+        XCTAssertEqual(joined, "one two three four five six seven eight")
+    }
+
+    func testLongMeetingThreshold() {
+        XCTAssertGreaterThan(TranscriptChunkScheduler.longMeetingThresholdSeconds, 60)
+        XCTAssertGreaterThan(TranscriptChunkScheduler.longMeetingWindowSeconds, 60)
+    }
 }
+

@@ -220,9 +220,13 @@ struct IOSHistoryRow: View {
             }
             return String(format: "%.0fs · on-device Whisper", entry.durationSeconds)
         case .partial:
-            return "Partial — tap Retry to continue"
+            return "Partial — tap Regenerate to continue"
         case .failed:
-            return "Tap to open, then Retry"
+            let reason = entry.originalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !reason.isEmpty && reason != entry.cleanedText && !reason.hasPrefix("Recovered") && !reason.hasPrefix("Transcription failed") {
+                return reason
+            }
+            return "Tap to open, then Regenerate"
         case .complete:
             return entry.cleanedText
         }
@@ -230,8 +234,10 @@ struct IOSHistoryRow: View {
 }
 
 struct IOSHistoryDetailView: View {
-    let entry: HistoryEntry
+    let entryID: UUID
+    let initialEntry: HistoryEntry
     @EnvironmentObject var appState: IOSAppState
+    @State private var entry: HistoryEntry
     @State private var brief: MeetingBrief?
     @State private var analyzing = false
     @State private var errorText: String?
@@ -240,7 +246,9 @@ struct IOSHistoryDetailView: View {
     @StateObject private var audioPlayer: RecordingAudioController
 
     init(entry: HistoryEntry) {
-        self.entry = entry
+        self.entryID = entry.id
+        self.initialEntry = entry
+        _entry = State(initialValue: entry)
         _audioPlayer = StateObject(wrappedValue: RecordingAudioController(fileName: entry.audioFileName))
     }
 
@@ -286,19 +294,27 @@ struct IOSHistoryDetailView: View {
                             .padding(.horizontal, 4)
                     }
 
-                    if entry.transcriptionState == .failed || entry.transcriptionState == .pending || entry.transcriptionState == .partial {
+                    if entry.audioFileName != nil {
+                        let busy = entry.transcriptionState == .pending && appState.isProcessing
+                        let emphasize = entry.needsTranscriptRegenerateCTA
                         Button {
-                            Task { await appState.retryTranscription(for: entry) }
+                            Task { await appState.regenerateTranscription(for: entry) }
                         } label: {
                             HStack {
-                                Image(systemName: "arrow.clockwise")
-                                Text(entry.transcriptionState == .pending && appState.isProcessing ? "Transcribing…" : "Retry transcription")
+                                if busy {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text(busy
+                                     ? String(format: "Transcribing… %d%%", Int((max(entry.transcriptionProgress, appState.transcriptionProgress) * 100).rounded()))
+                                     : (emphasize ? "Regenerate transcript" : "Regenerate transcript"))
                             }
                             .frame(maxWidth: .infinity)
-                            .accessibilityLabel("Retry transcription")
+                            .accessibilityLabel("Regenerate transcript")
                         }
                         .buttonStyle(.glassProminent)
-                        .tint(ShravaTheme.coral)
+                        .tint(emphasize ? ShravaTheme.coral : ShravaTheme.purple)
                         .disabled(appState.isProcessing)
                     }
 
@@ -328,6 +344,21 @@ struct IOSHistoryDetailView: View {
         .navigationTitle("Capture")
         .navigationBarTitleDisplayMode(.inline)
         .task { brief = await BriefStore.shared.brief(for: entry.id) }
+        .onChange(of: appState.historyEpoch) { _, _ in
+            Task {
+                if let latest = await appState.historyManager.get(id: entryID) {
+                    entry = latest
+                }
+            }
+        }
+        .onChange(of: appState.transcriptionProgress) { _, _ in
+            guard appState.isProcessing else { return }
+            Task {
+                if let latest = await appState.historyManager.get(id: entryID) {
+                    entry = latest
+                }
+            }
+        }
         .sheet(isPresented: $showBrief) {
             NavigationStack {
                 Group {

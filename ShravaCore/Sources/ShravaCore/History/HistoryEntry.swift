@@ -71,6 +71,34 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
         transcriptionState == .pending || transcriptionState == .partial || transcriptionState == .failed
     }
 
+    /// True when History should surface a clear Regenerate / Retry CTA.
+    public var needsTranscriptRegenerateCTA: Bool {
+        guard audioFileName != nil else { return false }
+        if isPendingOrFailed { return true }
+        let body = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty { return true }
+        if body.hasPrefix("Transcribing") || body.hasPrefix("Recovered") || body.hasPrefix("Transcription failed") {
+            return true
+        }
+        // Suspiciously short for a long capture (stuck / truncated "complete").
+        if durationSeconds >= 20 * 60 {
+            let words = body.split { $0.isWhitespace || $0.isNewline }.count
+            let minExpected = max(80, Int(durationSeconds / 12)) // ~5 wpm floor
+            if words < minExpected { return true }
+        }
+        return false
+    }
+
+    /// Placeholder / progress copy that should not be kept as the prior transcript.
+    public var isPlaceholderTranscript: Bool {
+        let body = cleanedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if body.isEmpty { return true }
+        return body.hasPrefix("Transcribing")
+            || body.hasPrefix("Recovered")
+            || body.hasPrefix("Transcription failed")
+            || body.hasPrefix("Regenerating")
+    }
+
     public var displayTitle: String {
         switch transcriptionState {
         case .pending:

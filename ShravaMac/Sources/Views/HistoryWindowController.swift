@@ -233,6 +233,40 @@ struct HistoryCard: View {
             .frame(width: 54, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 8) {
+                if entry.needsTranscriptRegenerateCTA {
+                    HStack(spacing: 8) {
+                        Image(systemName: entry.transcriptionState == .failed ? "exclamationmark.triangle.fill" : "arrow.clockwise.circle")
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.transcriptionState == .failed ? "Transcription failed" : (entry.transcriptionState == .pending ? "Waiting to transcribe" : "Transcript needs refresh"))
+                                .font(.system(size: 12, weight: .semibold))
+                            if entry.transcriptionState == .failed {
+                                Text(entry.originalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Tap Regenerate to retry from saved audio." : entry.originalText)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            } else if entry.transcriptionState == .pending {
+                                Text(String(format: "Transcribing… %d%%", Int((entry.transcriptionProgress * 100).rounded())))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Regenerate from the saved audio anytime.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Button("Regenerate transcript") {
+                            Task { await AppState.shared.regenerateTranscription(for: entry) }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(AppState.shared.isProcessing)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+                }
+
                 Text(entry.cleanedText)
                     .font(.system(size: 14))
                     .lineSpacing(3)
@@ -283,6 +317,20 @@ struct HistoryCard: View {
             }
 
             HStack(spacing: 4) {
+                if entry.audioFileName != nil {
+                    Button {
+                        Task { await AppState.shared.regenerateTranscription(for: entry) }
+                    } label: {
+                        if entry.transcriptionState == .pending && AppState.shared.isProcessing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "text.badge.checkmark")
+                        }
+                    }
+                    .help(entry.needsTranscriptRegenerateCTA ? "Regenerate transcript (recommended)" : "Regenerate transcript")
+                    .disabled(AppState.shared.isProcessing)
+                }
+
                 Button {
                     Task { await analyze(force: brief != nil) }
                 } label: {
@@ -331,6 +379,12 @@ struct HistoryCard: View {
             }
         }
         .contextMenu {
+            if entry.audioFileName != nil {
+                Button(entry.needsTranscriptRegenerateCTA ? "Regenerate transcript…" : "Regenerate transcript") {
+                    Task { await AppState.shared.regenerateTranscription(for: entry) }
+                }
+                .disabled(AppState.shared.isProcessing)
+            }
             Button(brief == nil ? "Analyze meeting" : "View brief") {
                 if brief != nil { showBrief = true }
                 else { Task { await analyze(force: false) } }

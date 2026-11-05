@@ -1111,14 +1111,18 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         progress: Double,
         fileName: String,
         duration: Double,
-        recoveredTitle: String?
+        recoveredTitle: String?,
+        preserveTextIfPresent: String? = nil
     ) async {
         let pct = Int((progress * 100).rounded())
         let label = recoveredTitle.map { "\($0) — Transcribing… \(pct)%" } ?? "Transcribing… \(pct)%"
+        let existing = await historyManager.get(id: id)
+        let keep = preserveTextIfPresent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasKeep = !(keep ?? "").isEmpty
         let entry = HistoryEntry(
             id: id,
-            originalText: label,
-            cleanedText: label,
+            originalText: hasKeep ? (existing?.originalText ?? preserveTextIfPresent!) : label,
+            cleanedText: hasKeep ? preserveTextIfPresent! : label,
             language: SettingsManager.shared.settings.language.rawValue,
             durationSeconds: duration,
             transcriptionState: .pending,
@@ -1175,14 +1179,17 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         lastTranscription = cleaned
         showingResult = true
 
+        let prior = id != nil ? await historyManager.get(id: id!) : nil
         let entry = HistoryEntry(
             id: id ?? UUID(),
             originalText: original,
             cleanedText: cleaned,
             language: result.language.rawValue,
+            timestamp: prior?.timestamp ?? Date(),
             durationSeconds: result.durationSeconds,
+            appBundleIdentifier: prior?.appBundleIdentifier,
             transcriptionState: .complete,
-            audioFileName: audioFileName,
+            audioFileName: audioFileName ?? prior?.audioFileName,
             transcriptionProgress: 1
         )
         if id != nil {
@@ -1208,22 +1215,48 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
     }
 
     func retryTranscription(for entry: HistoryEntry) async {
-        guard entry.transcriptionState == .failed || entry.transcriptionState == .pending || entry.transcriptionState == .partial,
-              let name = entry.audioFileName else { return }
+        await regenerateTranscription(for: entry)
+    }
+
+    /// Re-run Whisper on the linked audio. Keeps the previous transcript visible until the new
+    /// run succeeds, then replaces it. Never deletes the audio file.
+    func regenerateTranscription(for entry: HistoryEntry) async {
+        guard let name = entry.audioFileName else {
+            lastError = "No audio file linked to this capture"
+            return
+        }
         let url = Self.recordingsDirectory.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else {
             lastError = "Audio file missing"
             return
         }
+        if isProcessing {
+            lastError = "Already transcribing — try again when the current job finishes"
+            return
+        }
+
+        let previousCleaned = entry.cleanedText
+        let previousOriginal = entry.originalText
+        let keepPrevious = !entry.isPlaceholderTranscript
+
         var updating = entry
         updating.transcriptionState = .pending
         updating.transcriptionProgress = 0
-        updating.cleanedText = "Transcribing… 0%"
+        if keepPrevious {
+            // Leave cleanedText as-is so History still shows the old transcript while regenerating.
+        } else {
+            updating.cleanedText = "Transcribing… 0%"
+            updating.originalText = previousOriginal
+        }
         await historyManager.update(updating)
         historyEpoch += 1
         currentTab = .history
+        pendingOpenHistoryID = entry.id
         isProcessing = true
-        beginTranscribeBackgroundWork(title: "Retrying transcription", subtitle: formatDurationLabel(entry.durationSeconds))
+        beginTranscribeBackgroundWork(
+            title: keepPrevious ? "Regenerating transcript" : "Transcribing",
+            subtitle: formatDurationLabel(entry.durationSeconds)
+        )
         do {
             let result = try await IOSWhisper.shared.transcribeFile(
                 url: url,
@@ -1238,13 +1271,17 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
                             progress: p,
                             fileName: name,
                             duration: entry.durationSeconds,
-                            recoveredTitle: nil
+                            recoveredTitle: nil,
+                            preserveTextIfPresent: keepPrevious ? previousCleaned : nil
                         )
                         self?.updateContinuedProgress(p)
                     }
                 },
                 partialText: { [weak self] text in
                     Task { @MainActor in
+                        // During regen with a prior transcript, only persist partials as progress metadata
+                        // via updatePendingProgress; replace text only on success.
+                        if keepPrevious { return }
                         await self?.savePartialTranscript(
                             id: entry.id,
                             text: text,
@@ -1260,36 +1297,52 @@ final class IOSAppState: ObservableObject, IOSAudioRecorderDelegate {
         } catch {
             let msg = Self.formatError(error)
             let existing = await historyManager.get(id: entry.id)
-            let partial = (existing?.cleanedText ?? entry.cleanedText)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let looksLikePlaceholder = partial.isEmpty
-                || partial.hasPrefix("Transcribing")
-                || partial.hasPrefix("Recovered")
-                || partial.hasPrefix("Transcription failed")
-            var failed = entry
-            if !looksLikePlaceholder {
-                failed.transcriptionState = .partial
-                failed.cleanedText = partial
-                failed.originalText = existing?.originalText ?? partial
-                await historyManager.update(failed)
+            if keepPrevious {
+                var restored = entry
+                restored.cleanedText = previousCleaned
+                restored.originalText = previousOriginal
+                restored.transcriptionState = .complete
+                restored.transcriptionProgress = 1
+                await historyManager.update(restored)
                 historyEpoch += 1
-                lastError = "Partial transcript saved — tap Retry to continue. (\(msg))"
+                lastError = "Regenerate failed — previous transcript kept. (\(msg))"
                 await markLiveActivitySaved()
-                endTranscribeBackgroundWork(success: true)
-            } else {
-                failed.transcriptionState = .failed
-                failed.cleanedText = "Transcription failed — tap to retry"
-                failed.originalText = msg
-                await historyManager.update(failed)
-                historyEpoch += 1
-                lastError = "Error: \(msg)"
-                notifyError()
-                await markLiveActivityFailed("Transcription failed")
                 endTranscribeBackgroundWork(success: false)
+            } else {
+                let partial = (existing?.cleanedText ?? entry.cleanedText)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let looksLikePlaceholder = partial.isEmpty
+                    || partial.hasPrefix("Transcribing")
+                    || partial.hasPrefix("Recovered")
+                    || partial.hasPrefix("Transcription failed")
+                    || partial.hasPrefix("Regenerating")
+                var failed = entry
+                if !looksLikePlaceholder {
+                    failed.transcriptionState = .partial
+                    failed.cleanedText = partial
+                    failed.originalText = existing?.originalText ?? partial
+                    await historyManager.update(failed)
+                    historyEpoch += 1
+                    lastError = "Partial transcript saved — tap Regenerate to continue. (\(msg))"
+                    await markLiveActivitySaved()
+                    endTranscribeBackgroundWork(success: true)
+                } else {
+                    failed.transcriptionState = .failed
+                    failed.cleanedText = "Transcription failed — \(msg)"
+                    failed.originalText = msg
+                    failed.transcriptionProgress = existing?.transcriptionProgress ?? 0
+                    await historyManager.update(failed)
+                    historyEpoch += 1
+                    lastError = "Error: \(msg)"
+                    notifyError()
+                    await markLiveActivityFailed("Transcription failed")
+                    endTranscribeBackgroundWork(success: false)
+                }
             }
         }
         isProcessing = false
     }
+
 
     /// Import orphaned m4a files that never made it into History.
     func recoverOrphanedRecordings() async {
