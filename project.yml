@@ -123,8 +123,11 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: "Shrava needs microphone access to transcribe your voice."
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.shrava.ios.transcribe
         UIBackgroundModes:
           - audio
+          - processing
         NSSupportsLiveActivities: true
         CFBundleURLTypes:
           - CFBundleURLName: com.shrava.ios

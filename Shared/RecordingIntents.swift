@@ -87,7 +87,10 @@ enum RecordingIntentBridge {
 
     /// True when a Shrava recording Live Activity is active (works in app + extension).
     static var isLiveRecordingActive: Bool {
-        !Activity<RecordingActivityAttributes>.activities.isEmpty
+        Activity<RecordingActivityAttributes>.activities.contains { activity in
+            (activity.activityState == .active || activity.activityState == .stale)
+                && (activity.content.state.phase == .recording || activity.content.state.phase == .paused)
+        }
     }
 }
 

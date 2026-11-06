@@ -12,6 +12,9 @@ struct ShravaIOSApp: App {
 
     @StateObject private var appState = IOSAppState.shared
     @Environment(\.scenePhase) private var scenePhase
+    #if DEBUG
+    @State private var didRunRegression = false
+    #endif
     
     var body: some Scene {
         WindowGroup {
@@ -19,6 +22,15 @@ struct ShravaIOSApp: App {
                 .environmentObject(appState)
                 .onOpenURL { url in
                     handleURLScheme(url)
+                }
+                .task {
+                    #if DEBUG
+                    // Native regression runner uses a seeded saved recording; never opens the mic.
+                    if !didRunRegression, ProcessInfo.processInfo.arguments.contains("--shrava-regression") {
+                        didRunRegression = true
+                        appState.debugStart(path: "retry-failed")
+                    }
+                    #endif
                 }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in

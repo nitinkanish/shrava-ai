@@ -252,3 +252,11 @@ CI (`.github/workflows/ci.yml`) runs ShravaCore tests plus unsigned iOS Simulato
 - On-device file log (`Documents/shrava-debug.log`) rotates at ~512 KB and redacts Slack/API tokens.
 - Orphaned recordings are recovered as **pending** (ready to transcribe), not failed.
 - Transcription never marks **failed** if any chunk produced text — it saves **partial** and offers Retry.
+
+
+### iPhone transcription recovery
+- Stop saves the audio and queues transcription; it no longer keeps the recording intent open during Whisper processing.
+- iOS transcribes in bounded 60-second CPU windows with 5-second overlap (Mac keeps its existing window policy). CPU is intentional: iPhones do not support background Metal/GPU processing. Keep Shrava open for fastest uninterrupted processing; system background budget can still expire.
+- If processing is cancelled, interrupted, or fails, open **History → capture → Regenerate transcript**. Completed/prior text and audio are retained. Interrupted jobs show a reason instead of remaining pending forever; partial results are never reported as a complete transcript.
+- **Settings → Whisper model:** Hindi/Auto requires **Small Q5_1 or Large v3 Turbo**; Base is never used for Hindi/Auto. Small is the lower-memory choice and an explicit selection is respected. Model downloads validate HTTP status and the complete catalog file size before replacing a working model.
+- Recording intents await an active Live Activity before enabling the microphone. Transcribing, saved, and retry-needed phases are separate. Background task progress/cancellation/completion are connected to the actual job.

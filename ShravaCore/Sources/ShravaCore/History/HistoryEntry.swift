@@ -22,6 +22,8 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
     public var audioFileName: String?
     /// 0...1 while pending.
     public var transcriptionProgress: Double
+    /// Last attempt failure; kept separate from prior/partial transcript text.
+    public var transcriptionError: String?
 
     public init(
         id: UUID = UUID(),
@@ -33,7 +35,8 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
         appBundleIdentifier: String? = nil,
         transcriptionState: TranscriptionState = .complete,
         audioFileName: String? = nil,
-        transcriptionProgress: Double = 1
+        transcriptionProgress: Double = 1,
+        transcriptionError: String? = nil
     ) {
         self.id = id
         self.originalText = originalText
@@ -45,11 +48,12 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
         self.transcriptionState = transcriptionState
         self.audioFileName = audioFileName
         self.transcriptionProgress = transcriptionProgress
+        self.transcriptionError = transcriptionError
     }
 
     enum CodingKeys: String, CodingKey {
         case id, originalText, cleanedText, language, timestamp, durationSeconds
-        case appBundleIdentifier, transcriptionState, audioFileName, transcriptionProgress
+        case appBundleIdentifier, transcriptionState, audioFileName, transcriptionProgress, transcriptionError
     }
 
     public init(from decoder: Decoder) throws {
@@ -61,6 +65,7 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
         timestamp = try c.decode(Date.self, forKey: .timestamp)
         durationSeconds = try c.decode(Double.self, forKey: .durationSeconds)
         appBundleIdentifier = try c.decodeIfPresent(String.self, forKey: .appBundleIdentifier)
+        transcriptionError = try c.decodeIfPresent(String.self, forKey: .transcriptionError)
         transcriptionState = try c.decodeIfPresent(TranscriptionState.self, forKey: .transcriptionState) ?? .complete
         audioFileName = try c.decodeIfPresent(String.self, forKey: .audioFileName)
         transcriptionProgress = try c.decodeIfPresent(Double.self, forKey: .transcriptionProgress)
@@ -97,6 +102,7 @@ public struct HistoryEntry: Identifiable, Codable, Hashable, Sendable {
             || body.hasPrefix("Recovered")
             || body.hasPrefix("Transcription failed")
             || body.hasPrefix("Regenerating")
+            || body.hasPrefix("Transcription interrupted")
     }
 
     public var displayTitle: String {

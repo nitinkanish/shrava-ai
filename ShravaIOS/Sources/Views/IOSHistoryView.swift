@@ -287,6 +287,11 @@ struct IOSHistoryDetailView: View {
                     .padding(18)
                     .shravaGlass(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 
+                    if let reason = entry.transcriptionError {
+                        Label(reason, systemImage: "exclamationmark.triangle")
+                            .font(.footnote)
+                            .foregroundStyle(ShravaTheme.coral)
+                    }
                     if let errorText {
                         Text(errorText)
                             .font(.footnote)
@@ -295,7 +300,7 @@ struct IOSHistoryDetailView: View {
                     }
 
                     if entry.audioFileName != nil {
-                        let busy = entry.transcriptionState == .pending && appState.isProcessing
+                        let busy = appState.activeTranscriptionID == entry.id
                         let emphasize = entry.needsTranscriptRegenerateCTA
                         Button {
                             Task { await appState.regenerateTranscription(for: entry) }
@@ -318,6 +323,10 @@ struct IOSHistoryDetailView: View {
                         .disabled(appState.isProcessing)
                     }
 
+                    if appState.activeTranscriptionID == entry.id {
+                        Button("Cancel transcription (keep audio)") { appState.cancelTranscription() }
+                            .buttonStyle(.glass)
+                    }
                     Button {
                         Task { await analyze(force: brief != nil) }
                     } label: {

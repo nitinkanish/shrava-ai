@@ -8,26 +8,43 @@ import whisper
 enum IOSWhisperError: LocalizedError {
     case modelMissing
     case initFailed
-    case transcriptionFailed
+    case engineFailed(Int32)
+    case noSpeech
+    case cancelled
+    case timedOut
     case invalidAudio
     case conversionFailed(String)
 
     var errorDescription: String? {
         switch self {
-        case .modelMissing: return "Whisper model is not downloaded yet."
-        case .initFailed: return "Failed to load the on-device Whisper model."
-        case .transcriptionFailed: return "On-device transcription failed."
+        case .modelMissing: return "Download Small Q5_1 or Large v3 Turbo in Settings, then tap Regenerate transcript. Hindi/Auto cannot use Base. Your audio is saved."
+        case .initFailed: return "Whisper could not load the model. In Settings, download/select Small Q5_1 for lower memory use, then Regenerate. Your audio is saved."
+        case .engineFailed(let code): return "Whisper engine failed (code \(code)). Your audio is saved; open History and retry."
+        case .cancelled: return "Transcription was interrupted or cancelled. Your audio is saved; tap Regenerate transcript to retry."
+        case .timedOut: return "Whisper took too long on one audio window. Your audio is saved. Try Small Q5_1 in Settings, then Regenerate transcript."
+        case .noSpeech: return "No clear speech was detected. Your audio is saved; try Regenerate with the spoken language selected."
         case .invalidAudio: return "Could not decode recorded audio."
         case .conversionFailed(let detail): return "Audio conversion failed: \(detail)"
         }
     }
 }
 
-/// Checkpoint so transcription can resume after kill / jetsam.
-private struct TranscribeCheckpoint: Codable {
-    var chunkIndex: Int
-    var parts: [String]
-    var framesRead: Int64
+/// Native callbacks use this lock, never the context lock. Cancellation is cooperative:
+/// never free a context while whisper_full is still using it.
+private final class WhisperRunControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+    private var deadline = Double.greatestFiniteMagnitude
+    func cancel() { lock.lock(); cancelled = true; lock.unlock() }
+    func beginPass(seconds: Double) {
+        lock.lock(); deadline = ProcessInfo.processInfo.systemUptime + max(120, min(600, seconds * 10)); lock.unlock()
+    }
+    func finishPass() { lock.lock(); deadline = .greatestFiniteMagnitude; lock.unlock() }
+    var failure: IOSWhisperError? {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { return .cancelled }
+        return ProcessInfo.processInfo.systemUptime > deadline ? .timedOut : nil
+    }
 }
 
 private enum WhisperChunkLog {
@@ -47,14 +64,15 @@ private final class WhisperRunGate: @unchecked Sendable {
     private var busy = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
+    private func tryAcquire() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !busy else { return false }
+        busy = true
+        return true
+    }
+
     func acquire() async {
-        lock.lock()
-        if !busy {
-            busy = true
-            lock.unlock()
-            return
-        }
-        lock.unlock()
+        if tryAcquire() { return }
         await withCheckedContinuation { cont in
             lock.lock()
             if busy {
@@ -82,7 +100,7 @@ private final class WhisperRunGate: @unchecked Sendable {
 }
 
 /// Thin Swift wrapper around the whisper.cpp XCFramework for iOS.
-/// Loads a ggml model and transcribes 16 kHz mono PCM float samples. Metal on device; CPU on Simulator.
+/// Loads a ggml model and transcribes bounded 16 kHz mono windows on CPU, including in the background.
 final class IOSWhisper: @unchecked Sendable {
     static let shared = IOSWhisper()
 
@@ -91,7 +109,18 @@ final class IOSWhisper: @unchecked Sendable {
     private let lock = NSLock()
     /// Cap concurrent Whisper work (UI stays responsive; one decode at a time).
     private let runGate = WhisperRunGate()
-    private let maxChunkRetries = 3
+    private let controlLock = NSLock()
+    private var currentControl: WhisperRunControl?
+
+    func cancelCurrentTranscription() {
+        controlLock.lock(); let control = currentControl; controlLock.unlock()
+        control?.cancel()
+    }
+
+    private func setControl(_ control: WhisperRunControl?) {
+        controlLock.lock(); currentControl = control; controlLock.unlock()
+    }
+
 
     deinit {
         lock.lock()
@@ -129,13 +158,10 @@ final class IOSWhisper: @unchecked Sendable {
             throw IOSWhisperError.modelMissing
         }
         var params = whisper_context_default_params()
-        #if targetEnvironment(simulator)
+        // iPhone has no background GPU support. This job can be backgrounded at any time;
+        // Metal otherwise returns encode failures after Stop/lock-screen suspension.
         params.use_gpu = false
         params.flash_attn = false
-        #else
-        params.use_gpu = true
-        params.flash_attn = true
-        #endif
         guard let ctx = whisper_init_from_file_with_params(modelURL.path, params) else {
             throw IOSWhisperError.initFailed
         }
@@ -175,134 +201,39 @@ final class IOSWhisper: @unchecked Sendable {
         language: SupportedLanguage,
         dictionary: PersonalDictionary
     ) async throws -> TranscriptionResult {
-        try await loadModelForLanguage(language)
-
-        let samples = try Self.pcmFloat32Mono16kHz(from: audioData)
-        guard !samples.isEmpty else { throw IOSWhisperError.invalidAudio }
-
-        let resolved = try detectOrResolveLanguage(samples: samples, requested: language)
-        let pass = try await transcribeSamplesWithRetries(
-            samples: samples,
-            durationSeconds: durationSeconds,
-            language: resolved,
-            allowEmpty: false
-        )
-        return try await finalize(original: pass.text, language: pass.language, durationSeconds: durationSeconds, dictionary: dictionary)
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".audio")
+        try audioData.write(to: tmp)
+        defer { try? FileManager.default.removeItem(at: tmp); Self.clearCheckpoint(for: tmp) }
+        return try await transcribeFile(url: tmp, durationSeconds: durationSeconds,
+            language: language, dictionary: dictionary, progress: { _ in })
     }
 
-    /// Prefer a single whole-file whisper pass for short captures. Long meetings stream
-    /// overlapping 5–10 min windows (no full-PCM load) to avoid OOM / jetsam.
+    /// Every file uses bounded one-minute windows. Never decode a multi-hour recording
+    /// into a full-rate buffer, and never submit GPU work from a background iPhone task.
     func transcribeFile(
         url: URL,
         durationSeconds: Double,
         language: SupportedLanguage,
         dictionary: PersonalDictionary,
-        progress: @MainActor @escaping (Double) -> Void,
-        partialText: (@MainActor (String) -> Void)? = nil
+        progress: @MainActor @escaping (Double) async -> Void,
+        partialText: (@MainActor (String) async -> Void)? = nil,
+        resume: Bool = false
     ) async throws -> TranscriptionResult {
         await runGate.acquire()
         defer { runGate.release() }
-
-        try await loadModelForLanguage(language)
-
-        let isLongMeeting = durationSeconds >= TranscriptChunkScheduler.longMeetingThresholdSeconds
-        if isLongMeeting {
-            WhisperChunkLog.chunkLog.info("long-meeting path dur=\(durationSeconds, format: .fixed(precision: 1)) — overlapping windows")
-            let resolved = try detectLanguageFromFilePrefix(url: url, requested: language)
-            await progress(0.02)
-            return try await transcribeFileChunked(
-                url: url,
-                durationSeconds: durationSeconds,
-                language: language == .auto ? .auto : resolved,
-                dictionary: dictionary,
-                progress: progress,
-                partialText: partialText,
-                windowSeconds: TranscriptChunkScheduler.longMeetingWindowSeconds,
-                overlapSeconds: TranscriptChunkScheduler.longMeetingOverlapSeconds
-            )
-        }
-
-        // Decode full file once for language detect + whole-pass attempt (short/medium only).
-        let allSamples: [Float]
-        do {
-            allSamples = try Self.pcmFloat32Mono16kHz(fromFile: url)
-        } catch {
-            WhisperChunkLog.chunkLog.error("whole-file decode failed: \(error.localizedDescription, privacy: .public) — chunk fallback")
-            return try await transcribeFileChunked(
-                url: url,
-                durationSeconds: durationSeconds,
-                language: language,
-                dictionary: dictionary,
-                progress: progress,
-                partialText: partialText,
-                windowSeconds: TranscriptChunkScheduler.longMeetingWindowSeconds,
-                overlapSeconds: TranscriptChunkScheduler.longMeetingOverlapSeconds
-            )
-        }
-        guard !allSamples.isEmpty else { throw IOSWhisperError.invalidAudio }
-
-        let resolved = try detectOrResolveLanguage(samples: allSamples, requested: language)
-        await progress(0.05)
-
-        // Whole-audio one-pass (whisper.cpp windows internally). Cap ~45 min of PCM in memory.
-        let maxWholePassSamples = 16_000 * 60 * 45
-        if allSamples.count <= maxWholePassSamples {
-            do {
-                let pass = try await transcribeSamplesWithRetries(
-                    samples: allSamples,
-                    durationSeconds: durationSeconds,
-                    language: resolved,
-                    allowEmpty: false
-                )
-                let droppedHindi = language == .auto
-                    && WhisperLanguageSupport.likelyDroppedHindiSpans(
-                        text: pass.text,
-                        durationSeconds: durationSeconds,
-                        resolved: pass.language
-                    )
-                if !WhisperLanguageSupport.needsRetry(text: pass.text, durationSeconds: durationSeconds), !droppedHindi {
-                    await progress(1)
-                    await partialText?(pass.text)
-                    WhisperChunkLog.chunkLog.info("whole-pass ok lang=\(pass.language.rawValue, privacy: .public) chars=\(pass.text.count) dur=\(durationSeconds, format: .fixed(precision: 1))")
-                    Self.clearCheckpoint(for: url)
-                    return try await finalize(original: pass.text, language: pass.language, durationSeconds: durationSeconds, dictionary: dictionary)
-                }
-                WhisperChunkLog.chunkLog.warning("whole-pass weak/mixed (\(pass.text.count) chars / \(String(format: "%.1f", durationSeconds))s droppedHindi=\(droppedHindi)) — falling back to chunks")
-            } catch {
-                WhisperChunkLog.chunkLog.error("whole-pass failed: \(error.localizedDescription, privacy: .public) — chunk fallback")
-            }
-        }
-
-        // Re-allow Auto per chunk so mixed Hinglish recovers Hindi+English spans.
-        // Medium files use shorter windows for language agility; still overlap-stitched.
-        let mediumWindow: Double = allSamples.count > 16_000 * 60 * 15 ? 180 : 30
-        return try await transcribeFileChunked(
-            url: url,
-            durationSeconds: durationSeconds,
-            language: language == .auto ? .auto : resolved,
-            dictionary: dictionary,
-            progress: progress,
-            partialText: partialText,
-            windowSeconds: mediumWindow,
-            overlapSeconds: mediumWindow >= 60 ? 15 : 2
-        )
-    }
-
-    /// Language detect from the first ~30s without loading the entire file into RAM.
-    private func detectLanguageFromFilePrefix(url: URL, requested: SupportedLanguage) throws -> SupportedLanguage {
-        guard requested == .auto else { return requested }
-        let file = try AVAudioFile(forReading: url)
-        let format = file.processingFormat
-        let probeSeconds: Double = 30
-        let probeFrames = min(file.length, AVAudioFramePosition(format.sampleRate * probeSeconds))
-        guard probeFrames > AVAudioFramePosition(format.sampleRate) else { return .hindi }
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(probeFrames)) else {
-            return .hindi
-        }
-        file.framePosition = 0
-        try file.read(into: buffer, frameCount: AVAudioFrameCount(probeFrames))
-        let samples = try Self.convertTo16kMono(buffer: buffer, format: format)
-        return try detectOrResolveLanguage(samples: samples, requested: .auto)
+        try Task.checkCancellation()
+        let control = WhisperRunControl()
+        setControl(control)
+        defer { setControl(nil); unload() } // release the large native allocation between jobs
+        return try await withTaskCancellationHandler(operation: {
+            if !resume { Self.clearCheckpoint(for: url) }
+            try await loadModelForLanguage(language)
+            if let failure = control.failure { throw failure }
+            await progress(0.01)
+            return try await transcribeFileChunked(url: url, durationSeconds: durationSeconds,
+                language: language, dictionary: dictionary, progress: progress,
+                partialText: partialText, control: control)
+        }, onCancel: { control.cancel() })
     }
 
     // MARK: - Language detect (en / hi)
@@ -352,50 +283,11 @@ final class IOSWhisper: @unchecked Sendable {
 
     // MARK: - Core whisper run
 
-    private func transcribeSamplesWithRetries(
-        samples: [Float],
-        durationSeconds: Double,
-        language: SupportedLanguage,
-        allowEmpty: Bool
-    ) async throws -> WhisperPassResult {
-        var primary = try await runWhisperPass(samples: samples, language: language, allowEmpty: allowEmpty)
-        if !WhisperLanguageSupport.needsRetry(text: primary.text, durationSeconds: durationSeconds) {
-            return primary
-        }
-
-        let alternate = WhisperLanguageSupport.otherAutoLanguage(than: language)
-        WhisperChunkLog.chunkLog.warning("retry language \(language.rawValue, privacy: .public) -> \(alternate.rawValue, privacy: .public) chars=\(primary.text.count)")
-        let secondary = try await runWhisperPass(samples: samples, language: alternate, allowEmpty: allowEmpty)
-        let primaryScore = WhisperLanguageSupport.scoreTranscript(primary.text, averageLogProb: primary.averageLogProb)
-        let secondaryScore = WhisperLanguageSupport.scoreTranscript(secondary.text, averageLogProb: secondary.averageLogProb)
-        if secondaryScore > primaryScore
-            || !WhisperLanguageSupport.needsRetry(text: secondary.text, durationSeconds: durationSeconds) {
-            primary = secondary
-        }
-
-        // Optional larger model (small) if already downloaded.
-        if WhisperLanguageSupport.needsRetry(text: primary.text, durationSeconds: durationSeconds) {
-            if let larger = await MainActor.run(body: { WhisperModelManager.shared.largerModelURLIfAvailable() }) {
-                WhisperChunkLog.chunkLog.warning("retry larger model \(larger.lastPathComponent, privacy: .public)")
-                try ensureLoaded(modelURL: larger)
-                let third = try await runWhisperPass(samples: samples, language: primary.language, allowEmpty: allowEmpty)
-                if third.text.count > primary.text.count
-                    || !WhisperLanguageSupport.needsRetry(text: third.text, durationSeconds: durationSeconds) {
-                    primary = third
-                }
-                // Reload default base for subsequent work.
-                let base = await MainActor.run { WhisperModelManager.shared.modelURL }
-                try? ensureLoaded(modelURL: base)
-            }
-        }
-        return primary
-    }
-
-    private func runWhisperPass(samples: [Float], language: SupportedLanguage, allowEmpty: Bool) async throws -> WhisperPassResult {
+    private func runWhisperPass(samples: [Float], language: SupportedLanguage, allowEmpty: Bool, control: WhisperRunControl) async throws -> WhisperPassResult {
         try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let result = try self.runWhisper(samples: samples, language: language.rawValue, allowEmpty: allowEmpty)
+                    let result = try self.runWhisper(samples: samples, language: language.rawValue, allowEmpty: allowEmpty, control: control)
                     cont.resume(returning: WhisperPassResult(text: result.text, language: language, averageLogProb: result.avgLogProb))
                 } catch {
                     cont.resume(throwing: error)
@@ -406,12 +298,14 @@ final class IOSWhisper: @unchecked Sendable {
 
     /// Run whisper on samples. Empty output is allowed when `allowEmpty` (per-chunk) so silence
     /// does not abort a multi-chunk file.
-    private func runWhisper(samples: [Float], language: String, allowEmpty: Bool) throws -> (text: String, avgLogProb: Double) {
+    private func runWhisper(samples: [Float], language: String, allowEmpty: Bool, control: WhisperRunControl) throws -> (text: String, avgLogProb: Double) {
         lock.lock()
         defer { lock.unlock() }
         guard let context else { throw IOSWhisperError.modelMissing }
 
-        let maxThreads = max(1, min(8, ProcessInfo.processInfo.processorCount - 2))
+        if let failure = control.failure { throw failure }
+        control.beginPass(seconds: Double(samples.count) / 16_000)
+        let maxThreads = max(1, min(4, ProcessInfo.processInfo.processorCount - 2))
         var params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH)
         params.print_realtime = false
         params.print_progress = false
@@ -429,6 +323,16 @@ final class IOSWhisper: @unchecked Sendable {
         params.temperature_inc = 0.2
         params.beam_search.beam_size = 5
         params.n_max_text_ctx = 0
+        params.abort_callback_user_data = Unmanaged.passUnretained(control).toOpaque()
+        params.abort_callback = { opaque in
+            guard let opaque else { return false }
+            return Unmanaged<WhisperRunControl>.fromOpaque(opaque).takeUnretainedValue().failure != nil
+        }
+        params.encoder_begin_callback_user_data = params.abort_callback_user_data
+        params.encoder_begin_callback = { _, _, opaque in
+            guard let opaque else { return true }
+            return Unmanaged<WhisperRunControl>.fromOpaque(opaque).takeUnretainedValue().failure == nil
+        }
 
         let modelsDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Shrava/models", isDirectory: true)
@@ -443,21 +347,28 @@ final class IOSWhisper: @unchecked Sendable {
                 params.initial_prompt = promptPtr
                 params.carry_initial_prompt = false
                 if useVad {
-                    return try vadPath.withCString { vadPtr in
-                        params.vad = true
-                        params.vad_model_path = vadPtr
-                        return try self.executeWhisper(context: context, params: &params, samples: samples)
+                    do {
+                        let result = try vadPath.withCString { vadPtr -> (String, Double) in
+                            params.vad = true
+                            params.vad_model_path = vadPtr
+                            return try self.executeWhisper(context: context, params: &params, samples: samples)
+                        }
+                        if !result.0.isEmpty { return result }
+                    } catch {
+                        if let failure = control.failure { throw failure }
+                        WhisperChunkLog.chunkLog.warning("VAD pass failed; retrying same window without VAD")
                     }
-                } else {
-                    params.vad = false
-                    params.vad_model_path = nil
-                    return try self.executeWhisper(context: context, params: &params, samples: samples)
                 }
+                params.vad = false
+                params.vad_model_path = nil
+                return try self.executeWhisper(context: context, params: &params, samples: samples)
             }
         }
 
+        if let failure = control.failure { throw failure }
+        control.finishPass()
         if pair.0.isEmpty && !allowEmpty {
-            throw IOSWhisperError.transcriptionFailed
+            throw IOSWhisperError.noSpeech
         }
         return pair
     }
@@ -471,8 +382,13 @@ final class IOSWhisper: @unchecked Sendable {
             guard let base = buf.baseAddress else { return -1 }
             return whisper_full(context, params, base, Int32(buf.count))
         }
+        if let opaque = params.abort_callback_user_data,
+           let failure = Unmanaged<WhisperRunControl>.fromOpaque(opaque).takeUnretainedValue().failure {
+            throw failure
+        }
         guard result == 0 else {
-            throw IOSWhisperError.transcriptionFailed
+            WhisperChunkLog.chunkLog.error("whisper_full failed rc=\(result) samples=\(samples.count)")
+            throw IOSWhisperError.engineFailed(result)
         }
 
         var transcription = ""
@@ -511,174 +427,73 @@ final class IOSWhisper: @unchecked Sendable {
         durationSeconds: Double,
         language: SupportedLanguage,
         dictionary: PersonalDictionary,
-        progress: @MainActor @escaping (Double) -> Void,
-        partialText: (@MainActor (String) -> Void)?,
-        windowSeconds: Double = TranscriptChunkScheduler.longMeetingWindowSeconds,
-        overlapSeconds: Double = TranscriptChunkScheduler.longMeetingOverlapSeconds
+        progress: @MainActor @escaping (Double) async -> Void,
+        partialText: (@MainActor (String) async -> Void)?,
+        control: WhisperRunControl
     ) async throws -> TranscriptionResult {
-        let resolvedLang: SupportedLanguage = language == .auto ? .hindi : language
-        let langCode = language == .auto ? "auto" : language.rawValue
-
         let file = try AVAudioFile(forReading: url)
         let format = file.processingFormat
-        let totalFrames = file.length
-        guard totalFrames > 0 else { throw IOSWhisperError.invalidAudio }
-
-        guard let target = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: 16000,
-            channels: 1,
-            interleaved: false
-        ) else { throw IOSWhisperError.invalidAudio }
-        guard let converter = AVAudioConverter(from: format, to: target) else {
-            throw IOSWhisperError.invalidAudio
-        }
-
+        guard file.length > 0, format.sampleRate > 0 else { throw IOSWhisperError.invalidAudio }
         let ranges = TranscriptChunkScheduler.overlappingFrameRanges(
-            totalFrames: totalFrames,
-            sampleRate: format.sampleRate,
-            windowSeconds: windowSeconds,
-            overlapSeconds: overlapSeconds
-        )
-        WhisperChunkLog.chunkLog.info(
-            "chunked windows=\(ranges.count) window=\(windowSeconds, format: .fixed(precision: 0))s overlap=\(overlapSeconds, format: .fixed(precision: 0))s dur=\(durationSeconds, format: .fixed(precision: 1))"
-        )
-
-        var parts: [String] = []
-        var chunkIndex = 0
-        var lastChunkError: Error?
-        var resumeFrom = 0
-
-        if let cp = Self.loadCheckpoint(for: url), cp.chunkIndex > 0, cp.chunkIndex < ranges.count {
-            parts = cp.parts
-            chunkIndex = cp.chunkIndex
-            resumeFrom = cp.chunkIndex
-            let joined = TranscriptChunkScheduler.stitchChunkTexts(parts)
-            if !joined.isEmpty {
-                await partialText?(joined)
-            }
-            await progress(min(0.99, Double(chunkIndex) / Double(max(1, ranges.count))))
+            totalFrames: file.length, sampleRate: format.sampleRate,
+            windowSeconds: TranscriptionRecoveryPolicy.iosWindowSeconds,
+            overlapSeconds: TranscriptionRecoveryPolicy.iosOverlapSeconds)
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let fingerprint = "v2|\(bytes)|\(file.length)|\(loadedModelPath ?? "")|\(language.rawValue)|60|5"
+        var checkpoint = Self.loadCheckpoint(for: url)
+            .flatMap { $0.canResume(fingerprint: fingerprint, windowCount: ranges.count) ? $0 : nil }
+            ?? TranscriptCheckpoint(fingerprint: fingerprint)
+        if !checkpoint.parts.isEmpty {
+            await partialText?(TranscriptChunkScheduler.stitchChunkTexts(checkpoint.parts))
         }
-
-        for (idx, range) in ranges.enumerated() {
-            if idx < resumeFrom {
-                continue
-            }
-            let readCount = AVAudioFrameCount(range.count)
-            guard let inBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: readCount) else {
-                throw IOSWhisperError.invalidAudio
-            }
-            file.framePosition = range.start
-            do {
-                try file.read(into: inBuffer, frameCount: readCount)
-            } catch {
-                lastChunkError = error
-                break
-            }
-            guard inBuffer.frameLength > 0 else { continue }
-
-            let ratio = 16000.0 / format.sampleRate
-            let outFrames = AVAudioFrameCount(Double(inBuffer.frameLength) * ratio) + 32
-            guard let outBuffer = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: outFrames) else {
-                lastChunkError = IOSWhisperError.invalidAudio
-                continue
-            }
-            converter.reset()
-            var nsError: NSError?
-            var consumed = false
-            let inputBlock: AVAudioConverterInputBlock = { _, outStatus in
-                if consumed {
-                    outStatus.pointee = .noDataNow
-                    return nil
+        for idx in checkpoint.nextWindow..<ranges.count {
+            try Task.checkCancellation()
+            if let failure = control.failure { throw failure }
+            let range = ranges[idx]
+            // Scope AVAudio buffers to conversion; release full-rate audio before Whisper runs.
+            let samples: [Float] = try autoreleasepool {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(range.count)) else {
+                    throw IOSWhisperError.invalidAudio
                 }
-                consumed = true
-                outStatus.pointee = .haveData
-                return inBuffer
+                file.framePosition = range.start
+                try file.read(into: buffer, frameCount: AVAudioFrameCount(range.count))
+                guard buffer.frameLength > 0 else { throw IOSWhisperError.invalidAudio }
+                return try Self.convertTo16kMono(buffer: buffer, format: format)
             }
-            converter.convert(to: outBuffer, error: &nsError, withInputFrom: inputBlock)
-            if let nsError {
-                lastChunkError = IOSWhisperError.conversionFailed(
-                    "NSError domain=\(nsError.domain) code=\(nsError.code) \(nsError.localizedDescription)"
-                )
-                chunkIndex = idx + 1
-                continue
-            }
-            guard let ch = outBuffer.floatChannelData?[0], outBuffer.frameLength > 0 else {
-                chunkIndex = idx + 1
-                continue
-            }
-            let samples = Array(UnsafeBufferPointer(start: ch, count: Int(outBuffer.frameLength)))
-
-            // Per-window language: Auto stays Auto so Hinglish can flip inside the window.
-            let passLanguage: SupportedLanguage = language == .auto ? .auto : resolvedLang
-            var chunkText = ""
-            var chunkFailed = false
-            for attempt in 1...maxChunkRetries {
-                do {
-                    let passLang = passLanguage == .auto ? resolvedLang : passLanguage
-                    let pass = try await runWhisperPass(samples: samples, language: passLang, allowEmpty: true)
-                    chunkText = pass.text
-                    if language == .auto, WhisperLanguageSupport.isMostlyPlaceholders(chunkText) {
-                        let alt = WhisperLanguageSupport.otherAutoLanguage(than: passLang)
-                        let altPass = try await runWhisperPass(samples: samples, language: alt, allowEmpty: true)
-                        if altPass.text.count > chunkText.count {
-                            chunkText = altPass.text
-                        }
-                    }
-                    chunkFailed = false
-                    break
-                } catch {
-                    lastChunkError = error
-                    chunkFailed = true
-                    if attempt < maxChunkRetries {
-                        try? await Task.sleep(nanoseconds: UInt64(150_000_000 * attempt))
-                    }
+            await progress(min(0.98, Double(idx) / Double(ranges.count)))
+            let detected = try detectOrResolveLanguage(samples: samples, requested: language)
+            let resolved = TranscriptionRecoveryPolicy.languageForWindow(requested: language, detected: detected)
+            // Genuine digital silence is valid; do not mistake engine failure for a silent window.
+            let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
+            var text = ""
+            if peak > 0.0001 {
+                var pass = try await runWhisperPass(samples: samples, language: resolved, allowEmpty: true, control: control)
+                if language == .auto, WhisperLanguageSupport.needsRetry(text: pass.text, durationSeconds: Double(samples.count) / 16_000) {
+                    let alternate = WhisperLanguageSupport.otherAutoLanguage(than: resolved)
+                    let other = try await runWhisperPass(samples: samples, language: alternate, allowEmpty: true, control: control)
+                    if WhisperLanguageSupport.scoreTranscript(other.text, averageLogProb: other.averageLogProb)
+                        > WhisperLanguageSupport.scoreTranscript(pass.text, averageLogProb: pass.averageLogProb) { pass = other }
                 }
+                text = pass.text
             }
-
-            if !chunkText.isEmpty {
-                parts.append(chunkText)
-            } else if chunkFailed {
-                // Keep going — later windows may still succeed; partial text is checkpointed.
-            }
-            WhisperChunkLog.chunkLog.debug(
-                "window=\(idx + 1)/\(ranges.count) start=\(range.start) frames=\(range.count) samples=\(samples.count) chars=\(chunkText.count) failed=\(chunkFailed) lang=\(langCode, privacy: .public)"
-            )
-
-            chunkIndex = idx + 1
-            Self.saveCheckpoint(
-                TranscribeCheckpoint(
-                    chunkIndex: chunkIndex,
-                    parts: parts,
-                    framesRead: range.start + range.count
-                ),
-                for: url
-            )
-            let joined = TranscriptChunkScheduler.stitchChunkTexts(parts)
-            if !joined.isEmpty {
-                await partialText?(joined)
-            }
-            await progress(min(0.99, Double(chunkIndex) / Double(max(1, ranges.count))))
+            if let failure = control.failure { throw failure }
+            checkpoint.finishWindow(text: text) // never advance or drop a failed window
+            try Self.saveCheckpoint(checkpoint, for: url)
+            let joined = TranscriptChunkScheduler.stitchChunkTexts(checkpoint.parts)
+            if !joined.isEmpty { await partialText?(joined) }
+            await progress(min(0.98, Double(idx + 1) / Double(ranges.count)))
+            WhisperChunkLog.chunkLog.info("window=\(idx + 1)/\(ranges.count) chars=\(text.count) language=\(resolved.rawValue, privacy: .public) backend=cpu")
         }
-
-        await progress(1)
-        let original = WhisperLanguageSupport.filterHallucinations(
-            TranscriptChunkScheduler.stitchChunkTexts(parts)
-        )
-        WhisperChunkLog.chunkLog.info(
-            "transcribeFile chunked done windows=\(chunkIndex) dur=\(durationSeconds, format: .fixed(precision: 1)) chars=\(original.count) file=\(url.lastPathComponent, privacy: .public)"
-        )
-
-        if original.isEmpty {
-            if let lastChunkError { throw lastChunkError }
-            throw IOSWhisperError.transcriptionFailed
-        }
-
+        let original = WhisperLanguageSupport.filterHallucinations(TranscriptChunkScheduler.stitchChunkTexts(checkpoint.parts))
+        guard !original.isEmpty else { throw IOSWhisperError.noSpeech }
+        let finalLanguage: SupportedLanguage = language == .auto
+            ? (WhisperLanguageSupport.containsDevanagari(original) ? .hindi : .english) : language
+        let result = try await finalize(original: original, language: finalLanguage,
+            durationSeconds: Double(file.length) / format.sampleRate, dictionary: dictionary)
+        try Task.checkCancellation()
+        if let failure = control.failure { throw failure }
         Self.clearCheckpoint(for: url)
-        let finalLang: SupportedLanguage = language == .auto
-            ? (WhisperLanguageSupport.containsDevanagari(original) ? .hindi : resolvedLang)
-            : resolvedLang
-        return try await finalize(original: original, language: finalLang, durationSeconds: durationSeconds, dictionary: dictionary)
+        return result // caller publishes 100% only after durable History success
     }
 
     // MARK: - PCM decode
@@ -759,16 +574,16 @@ final class IOSWhisper: @unchecked Sendable {
         audioURL.deletingPathExtension().appendingPathExtension("transcribe-progress.json")
     }
 
-    private static func loadCheckpoint(for audioURL: URL) -> TranscribeCheckpoint? {
+    private static func loadCheckpoint(for audioURL: URL) -> TranscriptCheckpoint? {
         let url = checkpointURL(for: audioURL)
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(TranscribeCheckpoint.self, from: data)
+        return try? JSONDecoder().decode(TranscriptCheckpoint.self, from: data)
     }
 
-    private static func saveCheckpoint(_ cp: TranscribeCheckpoint, for audioURL: URL) {
+    private static func saveCheckpoint(_ cp: TranscriptCheckpoint, for audioURL: URL) throws {
         let url = checkpointURL(for: audioURL)
-        guard let data = try? JSONEncoder().encode(cp) else { return }
-        try? data.write(to: url, options: .atomic)
+        let data = try JSONEncoder().encode(cp)
+        try data.write(to: url, options: .atomic)
     }
 
     private static func clearCheckpoint(for audioURL: URL) {

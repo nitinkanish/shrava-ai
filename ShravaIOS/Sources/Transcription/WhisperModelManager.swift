@@ -81,6 +81,7 @@ final class WhisperModelManager: ObservableObject {
     private var observation: NSKeyValueObservation?
     private let pathMonitor = NWPathMonitor()
     private var autoUpgradeStarted = false
+    private var modelDownloadTask: Task<Void, Error>?
 
     var modelsDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -109,7 +110,7 @@ final class WhisperModelManager: ObservableObject {
         guard let size = (try? FileManager.default.attributesOfItem(atPath: vadModelURL.path)[.size] as? NSNumber)?.int64Value else {
             return false
         }
-        return size > 100_000
+        return size == Self.vadExpectedByteCount
     }
 
     var isReady: Bool {
@@ -175,9 +176,7 @@ final class WhisperModelManager: ObservableObject {
             let url = dir.appendingPathComponent(opt.fileName)
             guard let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value,
                   size > 1_000_000 else { return nil }
-            let expected = opt.expectedByteCount
-            let tol = max(2_000_000, expected / 50)
-            guard abs(size - expected) <= tol || size > expected - tol else { return nil }
+            guard TranscriptionRecoveryPolicy.validModelByteCount(size, expected: opt.expectedByteCount) else { return nil }
             return opt
         }
         return installed.max(by: { $0.qualityRank < $1.qualityRank })
@@ -188,9 +187,7 @@ final class WhisperModelManager: ObservableObject {
     }
 
     private func isValidModelSize(_ bytes: Int64, for option: WhisperModelOption) -> Bool {
-        let expected = option.expectedByteCount
-        let tol = max(2_000_000, expected / 50)
-        return abs(bytes - expected) <= tol || bytes > expected - tol
+        TranscriptionRecoveryPolicy.validModelByteCount(bytes, expected: option.expectedByteCount)
     }
 
     func refreshStatus() {
@@ -204,7 +201,7 @@ final class WhisperModelManager: ObservableObject {
         } else if FileManager.default.fileExists(atPath: url.path),
                   let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value,
                   size > 1_000_000, !isValidModelSize(size, for: option) {
-            try? FileManager.default.removeItem(at: url)
+            // Keep suspect file until a validated replacement is downloaded.
             status = .missing
             downloadProgress = 0
         } else if case .downloading = status {
@@ -260,6 +257,7 @@ final class WhisperModelManager: ObservableObject {
     func modelURLForTranscription(language: SupportedLanguage) -> URL? {
         let needsHindi = language == .hindi || language == .auto
         if needsHindi {
+            if selectedOption.qualityRank >= Self.minimumHindiQualityRank, isInstalled(selectedOption) { return modelURL }
             if let best = bestInstalledOption(minRank: Self.minimumHindiQualityRank) {
                 if selectedOption.qualityRank < Self.minimumHindiQualityRank {
                     selectedModelID = best.id
@@ -300,9 +298,7 @@ final class WhisperModelManager: ObservableObject {
         guard isOnWiFi else { return }
 
         if isInstalled(recommendedOption) {
-            if selectedModelID != recommendedOption.id && selectedOption.qualityRank < recommendedOption.qualityRank {
-                select(recommendedOption)
-            }
+            // Never override an explicit Small selection with Turbo (memory/battery choice).
             Task { await downloadVadIfNeeded() }
             refreshBanner()
             return
@@ -313,7 +309,7 @@ final class WhisperModelManager: ObservableObject {
         if !isHindiCapable {
             // Prefer turbo on Wi‑Fi; Small is the Hindi floor if turbo fails later.
             target = recommendedOption
-        } else if selectedOption.qualityRank < recommendedOption.qualityRank {
+        } else if selectedModelID == Self.recommendedID {
             target = recommendedOption
         } else {
             autoUpgradeStarted = false
@@ -346,6 +342,7 @@ final class WhisperModelManager: ObservableObject {
     /// Ensure a Hindi-capable model exists before transcription; auto-download Small on any network if needed.
     func ensureHindiCapableModel() async throws {
         if isHindiCapable {
+            if selectedOption.qualityRank >= Self.minimumHindiQualityRank, isInstalled(selectedOption) { return }
             if let best = bestInstalledOption(minRank: Self.minimumHindiQualityRank) {
                 select(best)
             }
@@ -355,7 +352,14 @@ final class WhisperModelManager: ObservableObject {
         let target = isOnWiFi ? recommendedOption : (Self.catalog.first { $0.id == "small-q5_1" } ?? recommendedOption)
         select(target)
         bannerMessage = "Downloading \(target.displayName) — required for Hindi…"
-        try await downloadModelWithProgress()
+        do {
+            try await downloadModelWithProgress()
+        } catch {
+            guard target.id == Self.recommendedID,
+                  let small = Self.catalog.first(where: { $0.id == "small-q5_1" }) else { throw error }
+            select(small)
+            try await downloadModelWithProgress()
+        }
         refreshBanner()
         guard isHindiCapable else {
             throw URLError(.cannotOpenFile)
@@ -368,12 +372,25 @@ final class WhisperModelManager: ObservableObject {
 
     func downloadModelWithProgress() async throws {
         let option = selectedOption
+        if let task = modelDownloadTask {
+            try await task.value // join auto-upgrade; never start duplicate 547 MB transfers
+            if isInstalled(option) { refreshStatus(); return }
+        }
         let destination = modelsDirectory.appendingPathComponent(option.fileName)
-        try await download(from: option.downloadURL, to: destination, expected: option.expectedByteCount)
-        refreshStatus()
-        guard isReady else { throw URLError(.cannotOpenFile) }
-        if !isVadReady {
-            try? await download(from: Self.vadDownloadURL, to: vadModelURL, expected: Self.vadExpectedByteCount, trackProgress: false)
+        let task = Task { @MainActor in
+            try await self.download(from: option.downloadURL, to: destination, expected: option.expectedByteCount)
+        }
+        modelDownloadTask = task
+        do {
+            try await task.value
+            modelDownloadTask = nil
+            refreshStatus()
+            guard isInstalled(option) else { throw URLError(.cannotDecodeContentData) }
+            await downloadVadIfNeeded()
+        } catch {
+            modelDownloadTask = nil
+            status = .failed("Model download failed. Check connection/storage, then retry in Settings.")
+            throw error
         }
         refreshBanner()
     }
@@ -390,15 +407,29 @@ final class WhisperModelManager: ObservableObject {
             refreshBanner()
         }
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            let task = URLSession.shared.downloadTask(with: url) { [weak self] temp, response, error in
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 60
+            let task = URLSession.shared.downloadTask(with: request) { [weak self] temporaryURL, response, networkError in
+                // URLSession removes its temporary file as soon as this completion
+                // returns. Preserve it BEFORE hopping asynchronously to MainActor.
+                let preservedURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".model-download")
+                var error = networkError
+                var temp: URL?
+                if let temporaryURL, error == nil {
+                    do { try FileManager.default.moveItem(at: temporaryURL, to: preservedURL); temp = preservedURL }
+                    catch let fileError { error = fileError }
+                }
+                let completedError = error
+                let completedTemp = temp
                 Task { @MainActor in
-                    if let error {
+                    defer { if let completedTemp { try? FileManager.default.removeItem(at: completedTemp) } }
+                    if let error = completedError {
                         if trackProgress { self?.status = .failed(error.localizedDescription) }
                         self?.refreshBanner()
                         cont.resume(throwing: error)
                         return
                     }
-                    guard let temp else {
+                    guard let temp = completedTemp else {
                         let err = URLError(.badServerResponse)
                         if trackProgress { self?.status = .failed(err.localizedDescription) }
                         self?.refreshBanner()
@@ -406,15 +437,29 @@ final class WhisperModelManager: ObservableObject {
                         return
                     }
                     do {
-                        if FileManager.default.fileExists(atPath: destination.path) {
-                            try FileManager.default.removeItem(at: destination)
+                        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                            throw URLError(.badServerResponse)
                         }
-                        try FileManager.default.moveItem(at: temp, to: destination)
-                        if let size = (try? FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber)?.int64Value,
-                           size < expected / 2 {
-                            try? FileManager.default.removeItem(at: destination)
+                        let attrs = try FileManager.default.attributesOfItem(atPath: temp.path)
+                        guard let bytes = (attrs[.size] as? NSNumber)?.int64Value,
+                              TranscriptionRecoveryPolicy.validModelByteCount(bytes, expected: expected) else {
                             throw URLError(.cannotDecodeContentData)
                         }
+                        // Validate before replacing: a failed HTML/partial download must not
+                        // delete the last working model. Same-volume rename is atomic.
+                        let staged = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".download")
+                        try FileManager.default.copyItem(at: temp, to: staged)
+                        defer { try? FileManager.default.removeItem(at: staged) }
+                        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: staged.path)
+                        if FileManager.default.fileExists(atPath: destination.path) {
+                            _ = try FileManager.default.replaceItemAt(destination, withItemAt: staged)
+                        } else {
+                            try FileManager.default.moveItem(at: staged, to: destination)
+                        }
+                        var excluded = destination
+                        var values = URLResourceValues()
+                        values.isExcludedFromBackup = true
+                        try? excluded.setResourceValues(values)
                         if trackProgress {
                             self?.downloadProgress = 1
                             self?.status = .ready
@@ -432,9 +477,10 @@ final class WhisperModelManager: ObservableObject {
                 observation?.invalidate()
                 observation = task.progress.observe(\.fractionCompleted) { [weak self] prog, _ in
                     Task { @MainActor in
-                        self?.downloadProgress = prog.fractionCompleted
-                        self?.status = .downloading(progress: prog.fractionCompleted)
-                        self?.refreshBanner()
+                        guard let self, case .downloading = self.status else { return }
+                        self.downloadProgress = prog.fractionCompleted
+                        self.status = .downloading(progress: prog.fractionCompleted)
+                        self.refreshBanner()
                     }
                 }
             }
